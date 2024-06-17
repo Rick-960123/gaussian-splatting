@@ -11,6 +11,9 @@
 
 import os
 import sys
+
+sys.path.insert(0, "../")
+
 from PIL import Image
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
@@ -22,6 +25,9 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+from scene.tum import TUMDataset
+from scene.colmap_loader import Camera
+from scene.colmap_loader import Image as ColmapImage
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -129,6 +135,79 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
+def read_custom_intrinsics_text(path):
+    cameras = {}
+    with open(path, "r") as fid:
+        while True:
+            line = fid.readline()
+            if not line:
+                break
+            line = line.strip()
+            if len(line) > 0 and line[0] != "#":
+                elems = line.split()
+                camera_id = int(elems[0])
+                model = elems[1]
+                assert model == "PINHOLE", "While the loader support other types, the rest of the code assumes PINHOLE"
+                width = int(elems[2])
+                height = int(elems[3])
+                params = np.array(tuple(map(float, elems[4:])))
+                cameras[camera_id] = Camera(id=camera_id, model=model,
+                                            width=width, height=height,
+                                            params=params)
+    return cameras
+
+def readCustomSceneInfo(path, images, eval, llffhold=8):
+    poses, colors, depths, _ = TUMDataset(path).load_poses()
+    images_dir = os.path.join(path, "rgb")
+
+    cameras_intrinsic_file = os.path.join(path, "cameras.txt")
+    cam_intrinsics = read_custom_intrinsics_text(cameras_intrinsic_file)
+
+    cam_extrinsics = {}
+
+    for idx in range(poses.__len__()):
+        if idx % 10 !=0 :
+            continue
+
+        p, c, d = poses[idx], colors[idx], depths[idx]
+        image_id = int(float(c.split("/")[-1].rsplit(".", 1)[0])*1000)
+        qvec = p[3:]
+        tvec = p[0:3]
+        camera_id = 0
+        image_name = c.split("/")[-1]
+        cam_extrinsics[image_id] = ColmapImage(
+                    id=image_id, qvec=qvec, tvec=tvec,
+                    camera_id=camera_id, name=image_name, xys=[], point3D_ids=[])
+        
+    
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, images_dir))
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path, "points3D.ply")
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
+
+
+
+    
 def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
@@ -256,5 +335,9 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "Custom": readCustomSceneInfo
 }
+
+if __name__ == "__main__":
+    readCustomSceneInfo("/home/rick/Datasets/Custom")
