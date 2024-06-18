@@ -184,7 +184,7 @@ class PreProcess:
 
     def run(self):
         whole_points = np.array([])
-        
+
         while True:
             cur_pose = self.poseNext()
             if cur_pose is None:
@@ -238,7 +238,7 @@ class PreProcess:
                 break
         
         whole_points = self.transform_points_body_to_camera(whole_points)
-        self.save_point_cloud_to_ply(os.path.join(self.save_path, "whole_points.ply"), whole_points)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points.ply"), whole_points)
 
         return True
 
