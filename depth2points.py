@@ -4,6 +4,7 @@ import os
 from plyfile import PlyData, PlyElement
 import open3d as o3d
 from scene.tum import TUMDataset
+
 def read_depth_image(depth_file):
     depth_image = cv2.imread(depth_file, cv2.IMREAD_UNCHANGED)
     return depth_image
@@ -21,6 +22,7 @@ def read_pose_file(pose_file):
 def read_rgb_image(rgb_file):
     rgb_image = cv2.imread(rgb_file, cv2.IMREAD_COLOR)
     return rgb_image
+
 def depth_to_point_cloud(depth_image, rgb_image, pose, fx, fy, cx, cy, scale=5000.0):
     height, width = depth_image.shape
     point_cloud = []
@@ -70,6 +72,7 @@ def qvec2rotmat(qvec):
         [2 * qvec[3] * qvec[1] - 2 * qvec[0] * qvec[2],
          2 * qvec[2] * qvec[3] + 2 * qvec[0] * qvec[1],
          1 - 2 * qvec[1]**2 - 2 * qvec[2]**2]])
+
 def main():
     poses, colors, depths, T_poses = TUMDataset("/home/rick/Datasets/Custom/").load_poses()
     ply_output_dir = "/home/rick/Datasets/Custom"
@@ -99,3 +102,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

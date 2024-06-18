@@ -5,6 +5,7 @@ import os
 import open3d as o3d
 import laspy
 import struct
+from scipy.spatial.transform import Rotation
 
 class ImageFrame:
     def __init__(self, timestamp=0.0, img=None):
@@ -27,7 +28,7 @@ class Pose:
     
 
 class PreProcess:
-    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, save_path):
+    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, camera_pose, save_path):
         self._pose_file = open(pose_path, 'rb')  # Assuming binary read mode for pose file
 
         self._cap = cv2.VideoCapture(video_path)
@@ -36,13 +37,16 @@ class PreProcess:
         self._p_idx = 0
         self._imgIdx = 0
         self._lastVideoTime = 0
+        self._index = 0
         self.save_path = save_path
         self.image_cache = queue.Queue()
         self._videoTimeList = []
+        self._camera_pose = camera_pose
+        self._camera_time_error = 18
 
         with open(video_timestamp_path, 'r') as f:
             for line in f:
-                self._videoTimeList.append(float(line.strip()))
+                self._videoTimeList.append(float(line.strip()) + self._camera_time_error)
 
         # Ensure directories exist
         os.makedirs(os.path.join(save_path, "rgb"), exist_ok=True)
@@ -58,6 +62,7 @@ class PreProcess:
             os.remove(self.rgb_txt)
         if os.path.exists(self.pose_txt):
             os.remove(self.pose_txt)
+
     def imgNext(self, cur_pose):
         cur_image = ImageFrame()
         closest_timestamp = float('inf')
@@ -96,13 +101,14 @@ class PreProcess:
 
     def pointsNext(self, cur_pose):
         points = []
-        
+
         while self._p_idx < self._las.header.point_count:
             if self._las.gps_time[self._p_idx] < cur_pose.timestamp:
-                points.append(self._las.xyz[self._p_idx])
+                points.append([self._las.x[self._p_idx], self._las.y[self._p_idx], self._las.z[self._p_idx]])
                 self._p_idx += 1
             else:
                 break
+        points = np.array(points)
         return points
     
     def poseNext(self):
@@ -119,13 +125,67 @@ class PreProcess:
         tmp = np.array(point_cloud)
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(tmp[:,:3])
-        pcd.colors = o3d.utility.Vector3dVector(tmp[:,3:6])
-        pcd.normals  = o3d.utility.Vector3dVector(tmp[:,6:])
+        pcd.colors = o3d.utility.Vector3dVector(np.zeros((tmp.shape[0], 3)))
+        pcd.normals  = o3d.utility.Vector3dVector(np.zeros((tmp.shape[0], 3)))
         # 保存为PLY文件
         o3d.io.write_point_cloud(ply_file, pcd)
+
+    def filter_point_cloud(self, points):
+        tmp = np.array(points)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(tmp[:,:3])
+        down_sampled_pcd = pcd.voxel_down_sample(0.1)
+        return down_sampled_pcd.points
+
+    def transform_points_world_to_body(self, points, cur_pose):
+        points = np.array(points).transpose()
+        q = Rotation.from_quat(np.array([cur_pose.qX, cur_pose.qY, cur_pose.qZ, cur_pose.qW]))
+        r = q.as_matrix().transpose()
+        t = np.array([[cur_pose.posX, cur_pose.posY, cur_pose.posZ]]).transpose()
+        t = (-1 * r @ t).transpose()
+
+        t = np.array(([t[0] for i in range(points.shape[1])])).transpose()
+
+        points = (r@points + t).transpose()
+        return points
+    
+    def transform_pose_world_to_camera(self, cur_pose):
+        pose_q = Rotation.from_quat(np.array([cur_pose.qX, cur_pose.qY, cur_pose.qZ, cur_pose.qW]))
+        pose_r = pose_q.as_matrix()
+        pose_t = np.array([[cur_pose.posX, cur_pose.posY, cur_pose.posZ]]).transpose()
+
+        r = self._camera_pose[:3,:3].transpose()
+        t = self._camera_pose[:3, 3:]
+        t = (-1 * r @ t)
+        
+        r = r @ pose_r
+        t = r @ pose_t + t
+        
+        q =  Rotation.from_matrix(r).as_quat()
+        trans_pose = Pose(cur_pose.id, cur_pose.timestamp, t[0][0], t[1][0], t[2][0], q[0], q[1], q[2], q[3])
+        
+        return trans_pose
+    
+    def transform_points_body_to_camera(self, points):
+        points = np.array(points).transpose()
+
+        r = self._camera_pose[:3,:3].transpose()
+        t = self._camera_pose[:3, 3:]
+
+        t = (-1 * r @ t).transpose()
+        t = np.array([t[0] for i in range(points.shape[1])]).transpose()
+
+        points = (r@points + t).transpose()
+        return points
+
+    def read_ply(self, path):
+        pcd = o3d.io.read_point_cloud(path)
+        return pcd.points
+
     def run(self):
+        whole_points = np.array([])
+        
         while True:
-            
             cur_pose = self.poseNext()
             if cur_pose is None:
                 break
@@ -135,31 +195,54 @@ class PreProcess:
             if len(cur_points) == 0:
                 continue
 
+            if len(whole_points) == 0:
+                whole_points = cur_points
+            else:
+                whole_points = np.vstack((whole_points, cur_points))
+            
+            whole_points = self.filter_point_cloud(whole_points)
+
             cur_image = self.imgNext(cur_pose)
+            
+            if cur_image == None:
+                continue
             
             # 保存图像和点云
             cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_pose.timestamp}.png"), cur_image.img)
 
-            self.save_point_cloud_to_ply(os.path.join(self.save_path, f"points/{cur_pose.timestamp}.ply"), cur_points)  # Assuming laspy.write can save as PLY
+            self.save_point_cloud_to_ply(os.path.join(self.save_path, f"points/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
 
-            # 保存地面真实值
-            with open(os.path.join(self.save_path, "groudtruth.txt"), 'a') as ofs, \
+            with open(os.path.join(self.save_path, "groudtruth_lidar.txt"), 'a') as ofs_lidar, \
+                open(os.path.join(self.save_path, "groudtruth_camera.txt"), 'a') as ofs_camera, \
                 open(os.path.join(self.save_path, "rgb.txt"), 'a') as ofs_rgb, \
                 open(os.path.join(self.save_path, "points.txt"), 'a') as ofs_points:
 
-                if self._imgIdx == 1:  # 只在第一次写入时添加标题
-                    ofs.write("# timestamp tx ty tz qx qy qz qw\n")
+                if self._index == 0:  # 只在第一次写入时添加标题
+                    ofs_lidar.write("# timestamp tx ty tz qx qy qz qw\n")
+                    ofs_camera.write("# timestamp tx ty tz qx qy qz qw\n")
                     ofs_rgb.write("#  timestamp filename\n")
                     ofs_points.write("#  timestamp filename\n")
 
                 ofs_rgb.write(f"{cur_pose.timestamp} rgb/{cur_pose.timestamp}.png\n")
                 ofs_points.write(f"{cur_pose.timestamp} points/{cur_pose.timestamp}.ply\n")
 
-                ofs.write(f"{cur_pose.timestamp} {cur_pose.t[0]} {cur_pose.t[1]} {cur_pose.t[2]} "
-                        f"{cur_pose.q[0]} {cur_pose.q[1]} {cur_pose.q[2]} {cur_pose.q[3]}\n")
+                ofs_lidar.write(f"{cur_pose.timestamp} {cur_pose.posX} {cur_pose.posY} {cur_pose.posZ} "
+                        f"{cur_pose.qX} {cur_pose.qY} {cur_pose.qZ} {cur_pose.qW}\n")
+                
+                camera_pose = self.transform_pose_world_to_camera(cur_pose)
+                ofs_camera.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
+                        f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
+                
+            self._index += 1
+            if self._index == 200:
+                break
+        
+        whole_points = self.transform_points_body_to_camera(whole_points)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "whole_points.ply"), whole_points)
 
         return True
 
+ 
 if __name__ == "__main__":
     pose_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
     las_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
@@ -168,5 +251,29 @@ if __name__ == "__main__":
     video_timestamp_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
     save_path = "/home/rick/Datasets/Custom_tum"
     
-    pp = PreProcess(pose_path, las_path, video_path, video_timestamp_path, save_path)
+    T = np.array([-0.037767,
+                            -0.001235,
+                            -0.999282,
+                            0.059832,
+                            -0.999215,
+                            -0.011807,
+                            0.037780,
+                            -0.001428,
+                            -0.011845,
+                            0.999924,
+                            -0.000787,
+                            0.017868,
+                            0.000000,
+                            0.000000,
+                            0.000000,
+                            1.000000]).reshape((4,4))
+    
+    tmp_T = np.array([1,0,0,0,
+                         0,-1,0,0,
+                         0,0,-1,0,
+                         0,0,0,1]).reshape((4,4)) 
+    
+    camera_pose =  T @ tmp_T
+    
+    pp = PreProcess(pose_path, las_path, video_path, video_timestamp_path, camera_pose, save_path)
     pp.run()
