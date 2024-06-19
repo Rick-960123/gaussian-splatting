@@ -50,12 +50,12 @@ class PreProcess:
 
         # Ensure directories exist
         os.makedirs(os.path.join(save_path, "rgb"), exist_ok=True)
-        os.makedirs(os.path.join(save_path, "points"), exist_ok=True)
+        os.makedirs(os.path.join(save_path, "depth"), exist_ok=True)
 
         self.pose_lidar_txt = os.path.join(self.save_path, "groundtruth_lidar.txt")
         self.pose_txt = os.path.join(self.save_path, "groundtruth_camera.txt")
         self.rgb_txt = os.path.join(self.save_path, "rgb.txt")
-        self.points_txt = os.path.join(self.save_path, "points.txt")
+        self.points_txt = os.path.join(self.save_path, "depth.txt")
 
         if os.path.exists(self.points_txt):
             os.remove(self.points_txt)
@@ -211,9 +211,9 @@ class PreProcess:
                 continue
             
             # 保存图像和点云
-            # cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_pose.timestamp}.png"), cur_image.img)
+            cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_pose.timestamp}.png"), cur_image.img)
 
-            # self.save_point_cloud_to_ply(os.path.join(self.save_path, f"points/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
+            self.save_point_cloud_to_ply(os.path.join(self.save_path, f"depth/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
 
             with open(  self.pose_lidar_txt, 'a') as ofs_lidar, \
                 open( self.pose_txt, 'a') as ofs_camera, \
@@ -227,7 +227,7 @@ class PreProcess:
                     ofs_points.write("#  timestamp filename\n")
 
                 ofs_rgb.write(f"{cur_pose.timestamp} rgb/{cur_pose.timestamp}.png\n")
-                ofs_points.write(f"{cur_pose.timestamp} points/{cur_pose.timestamp}.ply\n")
+                ofs_points.write(f"{cur_pose.timestamp} depth/{cur_pose.timestamp}.ply\n")
 
                 ofs_lidar.write(f"{cur_pose.timestamp} {cur_pose.posX} {cur_pose.posY} {cur_pose.posZ} "
                         f"{cur_pose.qX} {cur_pose.qY} {cur_pose.qZ} {cur_pose.qW}\n")
@@ -243,17 +243,17 @@ class PreProcess:
                 break
         
         whole_points = self.transform_points_body_to_camera(whole_points)
-        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points.ply"), whole_points)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D.ply"), whole_points)
 
         return True
 
  
 if __name__ == "__main__":
-    pose_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
-    las_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
+    pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
+    las_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
 
-    video_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
-    video_timestamp_path = "/home/rick/Datasets/S181-办公室实时点云-20#/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
+    video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
+    video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
     save_path = "/home/rick/Datasets/Custom_tum"
     
     T = np.array([-0.037767,
