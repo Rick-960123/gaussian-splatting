@@ -52,7 +52,8 @@ class PreProcess:
         os.makedirs(os.path.join(save_path, "rgb"), exist_ok=True)
         os.makedirs(os.path.join(save_path, "points"), exist_ok=True)
 
-        self.pose_txt = os.path.join(self.save_path, "groudtruth.txt")
+        self.pose_lidar_txt = os.path.join(self.save_path, "groundtruth_lidar.txt")
+        self.pose_txt = os.path.join(self.save_path, "groundtruth_camera.txt")
         self.rgb_txt = os.path.join(self.save_path, "rgb.txt")
         self.points_txt = os.path.join(self.save_path, "points.txt")
 
@@ -62,6 +63,8 @@ class PreProcess:
             os.remove(self.rgb_txt)
         if os.path.exists(self.pose_txt):
             os.remove(self.pose_txt)
+        if os.path.exists(self.pose_lidar_txt):
+            os.remove(self.pose_lidar_txt)
 
     def imgNext(self, cur_pose):
         cur_image = ImageFrame()
@@ -158,11 +161,11 @@ class PreProcess:
         t = self._camera_pose[:3, 3:]
         t = (-1 * r @ t)
         
-        r = r @ pose_r
-        t = r @ pose_t + t
+        pose_r = r @ pose_r
+        pose_t = r @ pose_t + t
         
-        q =  Rotation.from_matrix(r).as_quat()
-        trans_pose = Pose(cur_pose.id, cur_pose.timestamp, t[0][0], t[1][0], t[2][0], q[0], q[1], q[2], q[3])
+        pose_q =  Rotation.from_matrix(pose_r).as_quat()
+        trans_pose = Pose(cur_pose.id, cur_pose.timestamp, pose_t[0][0], pose_t[1][0], pose_t[2][0], pose_q[0], pose_q[1], pose_q[2], pose_q[3])
         
         return trans_pose
     
@@ -171,8 +174,8 @@ class PreProcess:
 
         r = self._camera_pose[:3,:3].transpose()
         t = self._camera_pose[:3, 3:]
-
         t = (-1 * r @ t).transpose()
+
         t = np.array([t[0] for i in range(points.shape[1])]).transpose()
 
         points = (r@points + t).transpose()
@@ -208,14 +211,14 @@ class PreProcess:
                 continue
             
             # 保存图像和点云
-            cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_pose.timestamp}.png"), cur_image.img)
+            # cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_pose.timestamp}.png"), cur_image.img)
 
-            self.save_point_cloud_to_ply(os.path.join(self.save_path, f"points/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
+            # self.save_point_cloud_to_ply(os.path.join(self.save_path, f"points/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
 
-            with open(os.path.join(self.save_path, "groudtruth_lidar.txt"), 'a') as ofs_lidar, \
-                open(os.path.join(self.save_path, "groudtruth_camera.txt"), 'a') as ofs_camera, \
-                open(os.path.join(self.save_path, "rgb.txt"), 'a') as ofs_rgb, \
-                open(os.path.join(self.save_path, "points.txt"), 'a') as ofs_points:
+            with open(  self.pose_lidar_txt, 'a') as ofs_lidar, \
+                open( self.pose_txt, 'a') as ofs_camera, \
+                open( self.rgb_txt, 'a') as ofs_rgb, \
+                open( self.points_txt, 'a') as ofs_points:
 
                 if self._index == 0:  # 只在第一次写入时添加标题
                     ofs_lidar.write("# timestamp tx ty tz qx qy qz qw\n")
@@ -234,7 +237,9 @@ class PreProcess:
                         f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
                 
             self._index += 1
-            if self._index == 200:
+
+            print(self._index)
+            if self._index == 2000:
                 break
         
         whole_points = self.transform_points_body_to_camera(whole_points)
