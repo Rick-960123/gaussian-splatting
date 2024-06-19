@@ -166,8 +166,8 @@ def readCustomSceneInfo(path, images, eval, llffhold=8):
     cam_extrinsics = {}
 
     for idx in range(poses.__len__()):
-        if idx % 10 !=0 :
-            continue
+        if idx > 200:
+            break
 
         p, c, d = poses[idx], colors[idx], depths[idx]
         image_id = int(float(c.split("/")[-1].rsplit(".", 1)[0])*1000)
