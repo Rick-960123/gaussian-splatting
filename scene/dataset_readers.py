@@ -60,7 +60,9 @@ def getNerfppNorm(cam_info):
     cam_centers = []
 
     for cam in cam_info:
-        cam_centers.append(cam.T.reshape(3, 1))
+        W2C = getWorld2View2(cam.R, cam.T)
+        C2W = np.linalg.inv(W2C)
+        cam_centers.append(C2W[:3, 3:4])
 
     center, diagonal = get_center_and_diag(cam_centers)
     radius = diagonal * 1.1
@@ -123,7 +125,7 @@ def readCustomCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         uid = intr.id
         R = qvec2rotmat(extr.qvec)
-        T = np.array(extr.tvec)
+        T = R.transpose()@np.array(extr.tvec)
 
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
@@ -203,7 +205,7 @@ def readCustomSceneInfo(path, images, eval, llffhold=8):
     cam_extrinsics = {}
 
     for idx in range(poses.__len__()):
-        if idx > 200:
+        if idx > 10:
             break
 
         p, c, d = poses[idx], colors[idx], depths[idx]

@@ -138,7 +138,7 @@ class TUMDataset():
         return embedding.permute(0, 2, 3, 1)
     
 if __name__ == "__main__":
-    test = TUMDataset("/home/rick/Datasets/Custom")
+    test = TUMDataset("/home/rick/Datasets/Custom_tum")
     poses, colors, depths = test.load_poses()
     cam_extrinsics = {}
     for idx in range(poses.__len__()):
