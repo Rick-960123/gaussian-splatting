@@ -125,7 +125,7 @@ def readCustomCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         uid = intr.id
         R = qvec2rotmat(extr.qvec)
-        T = R.transpose()@np.array(extr.tvec)
+        T = -1*R.transpose()@np.array(extr.tvec)
 
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
