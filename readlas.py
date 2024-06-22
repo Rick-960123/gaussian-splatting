@@ -239,7 +239,7 @@ class PreProcess:
             self._index += 1
 
             print(self._index)
-            if self._index == 2000:
+            if self._index == 200:
                 break
         
         whole_points = self.transform_points_body_to_camera(whole_points)
@@ -254,7 +254,7 @@ if __name__ == "__main__":
 
     video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
     video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
-    save_path = "/home/rick/Datasets/Custom_tum"
+    save_path = "/home/rick/Datasets/Custom"
     
     T = np.array([-0.037767,
                             -0.001235,
