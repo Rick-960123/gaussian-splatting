@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+from scipy.spatial.transform import Rotation
 # 假设旋转矩阵 R 是单位矩阵
 R = np.eye(4, dtype=np.float32)
 
@@ -38,15 +38,23 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     ], dtype=np.float32)
     return proj_matrix
 
-# 计算变换矩阵
-world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
-projection_matrix = torch.tensor(getProjectionMatrix(znear, zfar, FoVx, FoVy)).transpose(0, 1).cuda()
+# # 计算变换矩阵
+# world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+# projection_matrix = torch.tensor(getProjectionMatrix(znear, zfar, FoVx, FoVy)).transpose(0, 1).cuda()
 
-# 计算完整的变换矩阵
-full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
+# # 计算完整的变换矩阵
+# full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
 
-# 将世界坐标系中的点转换到投影坐标系
-world_point_tensor = torch.tensor(world_point, dtype=torch.float32).cuda()
-projected_point = full_proj_transform.mv(world_point_tensor)
+# # 将世界坐标系中的点转换到投影坐标系
+# world_point_tensor = torch.tensor(world_point, dtype=torch.float32).cuda()
+# projected_point = full_proj_transform.mv(world_point_tensor)
 
-print(projected_point.cpu().numpy())
+# print(projected_point.cpu().numpy())
+
+M = np.array([[-0.037864270613236974, -0.9989404385583077, -0.02615907536329948], [0.0071590321113567555, 0.0259060028276413, -0.9996387483869972], [0.9992572467939151, -0.03803786574493221, 0.006170534775398922]])
+
+R = Rotation.from_matrix(M)
+
+print(R.as_quat())
+
+print(R.as_euler("zyx") * 180 / np.pi)

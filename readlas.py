@@ -28,7 +28,7 @@ class Pose:
     
 
 class PreProcess:
-    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, camera_pose, save_path):
+    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, T_c2b, save_path):
         self._pose_file = open(pose_path, 'rb')  # Assuming binary read mode for pose file
 
         self._cap = cv2.VideoCapture(video_path)
@@ -41,7 +41,7 @@ class PreProcess:
         self.save_path = save_path
         self.image_cache = queue.Queue()
         self._videoTimeList = []
-        self._camera_pose = camera_pose
+        self._T_c2b = T_c2b
         self._camera_time_error = 18
 
         with open(video_timestamp_path, 'r') as f:
@@ -52,8 +52,7 @@ class PreProcess:
         os.makedirs(os.path.join(save_path, "rgb"), exist_ok=True)
         os.makedirs(os.path.join(save_path, "depth"), exist_ok=True)
 
-        self.pose_lidar_txt = os.path.join(self.save_path, "groundtruth_lidar.txt")
-        self.pose_txt = os.path.join(self.save_path, "groundtruth_camera.txt")
+        self.pose_txt = os.path.join(self.save_path, "groundtruth.txt")
         self.rgb_txt = os.path.join(self.save_path, "rgb.txt")
         self.points_txt = os.path.join(self.save_path, "depth.txt")
 
@@ -63,8 +62,6 @@ class PreProcess:
             os.remove(self.rgb_txt)
         if os.path.exists(self.pose_txt):
             os.remove(self.pose_txt)
-        if os.path.exists(self.pose_lidar_txt):
-            os.remove(self.pose_lidar_txt)
 
     def imgNext(self, cur_pose):
         cur_image = ImageFrame()
@@ -155,28 +152,30 @@ class PreProcess:
     def transform_pose_world_to_camera(self, cur_pose):
         pose_q = Rotation.from_quat(np.array([cur_pose.qX, cur_pose.qY, cur_pose.qZ, cur_pose.qW]))
         pose_r = pose_q.as_matrix()
-        pose_t = np.array([[cur_pose.posX, cur_pose.posY, cur_pose.posZ]]).transpose()
+        pose_t = np.array([cur_pose.posX, cur_pose.posY, cur_pose.posZ]).transpose()
+        pose_T = np.ones((4,4))
+        pose_T[:3,:3] = pose_r
+        pose_T[:3,3] = pose_t
 
-        r = self._camera_pose[:3,:3].transpose()
-        t = self._camera_pose[:3, 3:]
-        t = (-1 * r @ t)
+        camera_pose_in_world = pose_T @ self._T_c2b
+        camera_pose_in_new_world = np.linalg.inv(self._T_c2b) @ camera_pose_in_world
         
-        pose_r = r @ pose_r
-        pose_t = r @ pose_t + t
+        pose_r = camera_pose_in_new_world[:3,:3]
+        pose_t = camera_pose_in_new_world[:3,3]
         
         pose_q =  Rotation.from_matrix(pose_r).as_quat()
-        trans_pose = Pose(cur_pose.id, cur_pose.timestamp, pose_t[0][0], pose_t[1][0], pose_t[2][0], pose_q[0], pose_q[1], pose_q[2], pose_q[3])
+        trans_pose = Pose(cur_pose.id, cur_pose.timestamp, pose_t[0], pose_t[1], pose_t[2], pose_q[0], pose_q[1], pose_q[2], pose_q[3])
         
         return trans_pose
     
     def transform_points_body_to_camera(self, points):
         points = np.array(points).transpose()
 
-        r = self._camera_pose[:3,:3].transpose()
-        t = self._camera_pose[:3, 3:]
-        t = (-1 * r @ t).transpose()
+        T_b2c = np.linalg.inv(self._T_c2b)
+        r = T_b2c[:3,:3]
+        t = T_b2c[:3,3]
 
-        t = np.array([t[0] for i in range(points.shape[1])]).transpose()
+        t = np.array([t.transpose() for i in range(points.shape[1])]).transpose()
 
         points = (r@points + t).transpose()
         return points
@@ -215,22 +214,17 @@ class PreProcess:
 
             self.save_point_cloud_to_ply(os.path.join(self.save_path, f"depth/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
 
-            with open(  self.pose_lidar_txt, 'a') as ofs_lidar, \
-                open( self.pose_txt, 'a') as ofs_camera, \
+            with open( self.pose_txt, 'a') as ofs_camera, \
                 open( self.rgb_txt, 'a') as ofs_rgb, \
                 open( self.points_txt, 'a') as ofs_points:
 
                 if self._index == 0:  # 只在第一次写入时添加标题
-                    ofs_lidar.write("# timestamp tx ty tz qx qy qz qw\n")
                     ofs_camera.write("# timestamp tx ty tz qx qy qz qw\n")
                     ofs_rgb.write("#  timestamp filename\n")
                     ofs_points.write("#  timestamp filename\n")
 
                 ofs_rgb.write(f"{cur_pose.timestamp} rgb/{cur_pose.timestamp}.png\n")
                 ofs_points.write(f"{cur_pose.timestamp} depth/{cur_pose.timestamp}.ply\n")
-
-                ofs_lidar.write(f"{cur_pose.timestamp} {cur_pose.posX} {cur_pose.posY} {cur_pose.posZ} "
-                        f"{cur_pose.qX} {cur_pose.qY} {cur_pose.qZ} {cur_pose.qW}\n")
                 
                 camera_pose = self.transform_pose_world_to_camera(cur_pose)
                 ofs_camera.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
@@ -239,7 +233,7 @@ class PreProcess:
             self._index += 1
 
             print(self._index)
-            if self._index == 2000:
+            if self._index == 200:
                 break
         
         whole_points = self.transform_points_body_to_camera(whole_points)
@@ -254,7 +248,7 @@ if __name__ == "__main__":
 
     video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
     video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
-    save_path = "/home/rick/Datasets/Custom_tum"
+    save_path = "/home/rick/Datasets/Custom"
     
     T = np.array([-0.037767,
                             -0.001235,
