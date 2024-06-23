@@ -249,7 +249,8 @@ if __name__ == "__main__":
     video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
     video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
     save_path = "/home/rick/Datasets/Custom"
-    
+    cameras_params = "0 PINHOLE 4000 3000 2071.184147 2071.184147 2051.995468 1589.171711"
+
     T = np.array([-0.037767,
                             -0.001235,
                             -0.999282,
