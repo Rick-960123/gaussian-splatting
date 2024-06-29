@@ -1,60 +1,103 @@
-import torch
-import numpy as np
-from scipy.spatial.transform import Rotation
-# 假设旋转矩阵 R 是单位矩阵
-R = np.eye(4, dtype=np.float32)
+import numpy as np  
+import random
+from matplotlib import pyplot as plt
 
-# 假设平移矩阵 T 是单位矩阵
-T = np.eye(4, dtype=np.float32)
+Consistency = 3  #阶数
+d = 0.9	#紧支域半径
+dotNumber = 36	#散点数量
+dotDinstance = 0.05	#散点间距
 
-# 假设平移向量 trans 和缩放因子 scale
-trans = np.array([0, 0, 0], dtype=np.float32)
-scale = 1.0
+test = 0	# 0 为曲线，1 为直线
 
-# 定义投影参数
-znear = 0.1
-zfar = 1000.0
-FoVx = 90.0  # 水平视场角
-FoVy = 90.0  # 垂直视场角
+x = []
+v = []
+Vp = []
+p = np.zeros((dotNumber, Consistency))
+M = []
 
-# 定义一个世界坐标系中的点
-world_point = np.array([30, 20, 800, 1], dtype=np.float32)  # 齐次坐标
 
-# 计算世界坐标系到视图坐标系的变换矩阵
-def getWorld2View2(R, T, trans, scale):
-    # 这里只是一个简单的示例实现，假设没有旋转和平移
-    world2view = np.eye(4, dtype=np.float32)
-    return world2view
+def w(xi,xj,d):
+    s = abs(xi-xj)/d
+    if(s <= 0.5):
+        return (2/3)-4*s+4*s**2+4*s**3
+    elif(s<=1):
+        return (4/3)-4*s+4*s**2-(4/3)*s**3
+    else:
+        return 0
 
-# 计算视图坐标系到投影坐标系的变换矩阵
-def getProjectionMatrix(znear, zfar, fovX, fovY):
-    aspect_ratio = 1.0  # 假设宽高比为1
-    f = 1.0 / np.tan(np.deg2rad(fovX) / 2)
-    proj_matrix = np.array([
-        [f / aspect_ratio, 0, 0, 0],
-        [0, f, 0, 0],
-        [0, 0, (zfar + znear) / (znear - zfar), (2 * zfar * znear) / (znear - zfar)],
-        [0, 0, -1, 0]
-    ], dtype=np.float32)
-    return proj_matrix
+def b_compute(i, x, v, d):
+    b = []
+    for c in range(Consistency):
+        t = 0
+        for j in range(dotNumber):
+            # if abs(x[i] - x[j]) < d:
+                t +=  p[j][c] * w(x[i], x[j], d) * v[j]
+        b.append(float(t))
+    return b
+        # for j in range(0, Consistency):
+        #     w()
 
-# # 计算变换矩阵
-# world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
-# projection_matrix = torch.tensor(getProjectionMatrix(znear, zfar, FoVx, FoVy)).transpose(0, 1).cuda()
 
-# # 计算完整的变换矩阵
-# full_proj_transform = (world_view_transform.unsqueeze(0).bmm(projection_matrix.unsqueeze(0))).squeeze(0)
+def A_compute(i, x, d):
+    A = []
+    for ci in range(Consistency):
+        vec = []
+        for cj in range(Consistency):
+            t = 0
+            for j in range(dotNumber):
+                t +=  w(x[i], x[j], d) * p[j][cj] * p[j][ci]
+            vec.append(float(t))
+        A.append(vec)
+    return A
 
-# # 将世界坐标系中的点转换到投影坐标系
-# world_point_tensor = torch.tensor(world_point, dtype=torch.float32).cuda()
-# projected_point = full_proj_transform.mv(world_point_tensor)
 
-# print(projected_point.cpu().numpy())
 
-M = np.array([[-0.037864270613236974, -0.9989404385583077, -0.02615907536329948], [0.0071590321113567555, 0.0259060028276413, -0.9996387483869972], [0.9992572467939151, -0.03803786574493221, 0.006170534775398922]])
+def polySet(x):
+    for i in range(dotNumber):
+        for j in range(0, Consistency):
+            p[i][j] = x[i]**(j)
 
-R = Rotation.from_matrix(M)
 
-print(R.as_quat())
+def Vcontruct(a,x,i):
+    value = 0
+    for c in range(len(a)):
+        value +=  a[c] * x[i]** c
+    return value
 
-print(R.as_euler("zyx") * 180 / np.pi)
+def main():
+    x = np.arange(-0.5*dotNumber*dotDinstance, 0.5*dotNumber*dotDinstance, dotDinstance)
+
+    for i in range(0, dotNumber):
+        if test == 0:
+            v.append(i + random.randint(-50,50)/10)
+            # v.append(random.randint(-50, 50) / 10)
+        else:
+            v.append(i + 0 / 10)
+
+    polySet(x)
+
+    for i in range(dotNumber):
+        b = b_compute(i, x, v, d)
+
+        A = A_compute(i, x, d)
+        a = np.linalg.solve(A, b)
+        Vp.append(Vcontruct(a, x, i))
+        # V.append(a[0]+a[1]*x[i])
+
+    plt.title("MLS")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.scatter(x,v,color = "green", s= 10)
+    plt.plot(x, Vp)
+    plt.show()
+
+if __name__ =='__main__':
+    main()
+
+
+
+
+
+
+
+

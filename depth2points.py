@@ -23,7 +23,7 @@ def read_rgb_image(rgb_file):
     rgb_image = cv2.imread(rgb_file, cv2.IMREAD_COLOR)
     return rgb_image
 
-def depth_to_point_cloud(depth_image, rgb_image, pose, fx, fy, cx, cy, scale=5000.0):
+def depth_to_point_cloud(depth_image, rgb_image, pose, fx, fy, cx, cy, scale=1000.0):
     height, width = depth_image.shape
     point_cloud = []
 
@@ -74,13 +74,13 @@ def qvec2rotmat(qvec):
          1 - 2 * qvec[1]**2 - 2 * qvec[2]**2]])
 
 def main():
-    poses, colors, depths, T_poses = TUMDataset("/home/rick/Datasets/Custom/").load_poses()
-    ply_output_dir = "/home/rick/Datasets/Custom"
+    poses, colors, depths, T_poses = TUMDataset("/home/rick/Datasets/Custom_tum/").load_poses()
+    ply_output_dir = "/home/rick/Datasets/Custom_tum"
     fx, fy, cx, cy = 535.4, 539.2, 320.1, 247.6
 
     downsampled_point_cloud = np.array([])
     for i, depth_file in enumerate(depths):
-        if not depth_file.endswith('.png') or i % 10 != 0:
+        if not depth_file.endswith('.png'):
             continue
         
         rgb_image = read_rgb_image(os.path.join(colors[i]))
