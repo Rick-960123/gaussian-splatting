@@ -319,10 +319,10 @@ class PreProcess:
         with open(self.camera_txt, 'a') as ofs_camera:
             ofs_camera.write(f"{cameraInfo}\n")
 
-        # whole_points = self.transform_points_body_to_camera(self._las.xyz)
-        # self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D_density.ply"), whole_points)
-        # whole_points = self.filter_point_cloud(whole_points)
-        # self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D.ply"), whole_points)
+        whole_points = self.transform_points_body_to_camera(self._las.xyz)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D_density.ply"), whole_points)
+        whole_points = self.filter_point_cloud(whole_points)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D.ply"), whole_points)
 
         return True
 
