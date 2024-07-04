@@ -6,7 +6,7 @@ import open3d as o3d
 import laspy
 import torch
 import struct
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 
 class Camera:
     def __init__(self,id, model, width, height, fx, fy, cx, cy):
@@ -29,12 +29,6 @@ class Camera:
                 self.cx,
                 self.cy]
 
-class ImageFrame:
-    def __init__(self, timestamp=0.0, img=None):
-        self.timestamp = timestamp
-        self.img = img
-
-
 class Pose:
     tdpose_format = '<I d d d d f f f f'  # Struct format string
     struct_size = struct.calcsize(tdpose_format)
@@ -48,7 +42,9 @@ class Pose:
         self.qY = qY
         self.qZ = qZ
         self.qW = qW
-        self.R = Rotation.from_quat(np.array([self.qX, self.qY, self.qZ, self.qW])).as_matrix()
+        self.R_sci = Rotation.from_quat(np.array([self.qX, self.qY, self.qZ, self.qW]))
+        self.R = self.R_sci.as_matrix()
+        self.q = self.R_sci.as_quat()
         self.t = np.array([self.posX, self.posY, self.posZ]).transpose()
         pose_T = np.eye(4)
         pose_T[:3,:3] = self.R
@@ -56,8 +52,16 @@ class Pose:
         self.T = pose_T
         self.T_inv = np.linalg.inv(self.T)
 
+class ImageFrame:
+    def __init__(self, timestamp=0.0, img=None, pose=None):
+        self.timestamp = timestamp
+        self.img = img
+        self.pose = pose
+
+
+
 class PreProcess:
-    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, T_c2b, save_path, camera):
+    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, T_c2b, save_path, camera, duration=200):
         self._pose_file = open(pose_path, 'rb')  # Assuming binary read mode for pose file
 
         self._cap = cv2.VideoCapture(video_path)
@@ -66,17 +70,25 @@ class PreProcess:
         self._p_idx = 0
         self._imgIdx = 0
         self._lastVideoTime = 0
-        self._index = 0
         self.save_path = save_path
         self.image_cache = queue.Queue()
         self._videoTimeList = []
         self._T_c2b = T_c2b
         self._camera_time_error = 18
         self._camera = camera
+        self._pose_list = []
 
         with open(video_timestamp_path, 'r') as f:
             for line in f:
                 self._videoTimeList.append(float(line.strip()) + self._camera_time_error)
+        
+        while True:
+            cur_pose = self.poseNext()
+            if cur_pose is None:
+                break
+            self._pose_list.append(cur_pose)
+        
+        self._stop_time = self._pose_list[0].timestamp + duration
 
         # Ensure directories exist
         os.makedirs(os.path.join(save_path, "rgb"), exist_ok=True)
@@ -84,6 +96,7 @@ class PreProcess:
         os.makedirs(os.path.join(save_path, "point"), exist_ok=True)
 
         self.pose_txt = os.path.join(self.save_path, "groundtruth.txt")
+        self.pose_lidar_txt = os.path.join(self.save_path, "groundtruth_lidar.txt")
         self.rgb_txt = os.path.join(self.save_path, "rgb.txt")
         self.depth_txt = os.path.join(self.save_path, "depth.txt")
         self.point_txt = os.path.join(self.save_path, "point.txt")
@@ -97,43 +110,52 @@ class PreProcess:
             os.remove(self.point_txt)
         if os.path.exists(self.pose_txt):
             os.remove(self.pose_txt)
+        if os.path.exists(self.pose_lidar_txt):
+            os.remove(self.pose_lidar_txt)
         if os.path.exists(self.camera_txt):
             os.remove(self.camera_txt)
 
-    def imgNext(self, cur_pose):
+    def insert_pose(self, timestamp, before_pose, after_pose):
+        rate = (timestamp - before_pose.timestamp) / (after_pose.timestamp - before_pose.timestamp)
+        t = (after_pose.t - before_pose.t)/rate + before_pose.t
+        key_rotations = Rotation.from_quat([before_pose.q, after_pose.q])
+        slerp = Slerp(np.array([before_pose.timestamp, after_pose.timestamp]), key_rotations)
+        q = slerp(np.array([timestamp]))[0].as_quat()
+        cur_pose = Pose(100000, timestamp, *t, *q)
+        return cur_pose
+
+    def imgNext(self):
         cur_image = ImageFrame()
-        closest_timestamp = float('inf')
+        first_pose = self._pose_list[0]
+        latest_pose = self._pose_list[-1]
 
         while True:
             if not self._cap.isOpened():
                 return None
-        
-            if not self.image_cache.empty():
-                cur_image = self.image_cache.get()
-            else:
-                ret, frame = self._cap.read()
-                if ret and frame is not None:
-                    cur_image.img = frame
-                    if self._imgIdx < len(self._videoTimeList):
-                        cur_image.timestamp = self._videoTimeList[self._imgIdx]
-                        self._imgIdx += 1
-                        self._lastVideoTime = cur_image.timestamp
-                    else:
-                        print(f"\n\nend of video time list {self._lastVideoTime}\n")
-                else:
-                    print(f"\n\nend of video {self._lastVideoTime}\n")
-
-            if abs(closest_timestamp - cur_pose.timestamp) > abs(cur_image.timestamp - cur_pose.timestamp):
-                closest_timestamp = cur_image.timestamp
-
-            if cur_pose.timestamp < cur_image.timestamp:
-                if abs(closest_timestamp - cur_pose.timestamp) > 0.5:
-                    return None
-                
-                if abs(closest_timestamp - cur_image.timestamp) > 1e-5:
-                    self.image_cache.put(cur_image)
-                break
             
+            ret, frame = self._cap.read()
+            if ret and frame is not None:
+                cur_image.img = frame
+                if self._imgIdx < len(self._videoTimeList):
+                    cur_image.timestamp = self._videoTimeList[self._imgIdx]
+                    self._imgIdx += 1
+                    self._lastVideoTime = cur_image.timestamp
+                else:
+                    print(f"\n\nend of video time list {self._lastVideoTime}\n")
+            else:
+                print(f"\n\nend of video {self._lastVideoTime}\n")
+                return None
+                        
+            if cur_image.timestamp >= first_pose.timestamp and cur_image.timestamp <= latest_pose.timestamp:
+                break
+        
+        for i in range(len(self._pose_list) - 1):
+            before_pose = self._pose_list[i]
+            after_pose = self._pose_list[i+1]
+            if before_pose.timestamp <= cur_image.timestamp and cur_image.timestamp <= after_pose.timestamp:
+                cur_image.pose = self.insert_pose(cur_image.timestamp, before_pose, after_pose)
+                break
+
         return cur_image
 
     def pointsNext(self, cur_pose):
@@ -208,122 +230,155 @@ class PreProcess:
         return pcd.points
 
     def get_depth_image(self, pose, points):
-        height = 400
-        width = 300
+        points = torch.tensor(np.array(points), dtype=torch.float32) 
+        ones = torch.ones((points.shape[0], 1), dtype=torch.float32)
+        points_homogeneous = torch.cat([points, ones], dim=1)  # shape (N, 4)
 
-        Fx = self._camera.fx 
-        Fy = self._camera.fy
-        Cx = self._camera.cx 
-        Cy = self._camera.cy
-
-        image = torch.zeros((height, width, 1), device='cuda')  # 使用GPU
-        depth_buffer = torch.full((height, width), float('inf'), device='cuda') 
-        pose_T_inv = torch.tensor(pose.T_inv, device='cuda')
-        points_tensor = torch.tensor(points, device='cuda')
-
-        # 执行点的变换
-        p_hom = pose_T_inv[:3, :3] @ points_tensor.T + pose_T_inv[:3, 3].unsqueeze(1)
-
-        # 过滤掉 z 坐标小于等于0的点
-        valid_mask = p_hom[2, :] > 1e-9
-        p_hom = p_hom[:, valid_mask]
-
-        # 投影到图像平面
-        p_proj_x = (p_hom[0] * Fx / p_hom[2] + Cx).long()
-        p_proj_y = (p_hom[1] * Fy / p_hom[2] + Cy).long()
-
-        # 过滤掉超出图像边界的点
-        valid_mask = (0 <= p_proj_x) & (p_proj_x < width) & (0 <= p_proj_y) & (p_proj_y < height)
-        p_proj_x = p_proj_x[valid_mask]
-        p_proj_y = p_proj_y[valid_mask]
-        p_hom_z = p_hom[2, valid_mask]
-
-        # 将有效点的投影坐标和深度信息用于更新深度缓冲区和图像
-        for x, y, z in zip(p_proj_x.cpu().numpy(), p_proj_y.cpu().numpy(), p_hom_z.cpu().numpy()):
-            if z < depth_buffer[y, x]:
-                depth_buffer[y, x] = z
-                image[y, x] = (z * 1000.0)
-
-        # 将图像转换回CPU进行进一步处理
-        depth = image.permute(2, 0, 1).cpu().squeeze(0)
-        depth_img = depth.numpy()
-        depth_map_cm_uint16 = depth_img.astype(np.uint16)
-        return depth_map_cm_uint16
-
-    def get_depth(self, pose, points):
-        pcd = o3d.geometry.PointCloud(np.array(points)[:,:3])
-        intrinsic = o3d.core.Tensor([[self._camera.fx , 0, self._camera.cx ], [0, self._camera.fy , self._camera.cy],
-                                 [0, 0, 1]])
-        extrinsic = o3d.core.Tensor(pose.T_inv)
-        depth = o3d.geometry.Image(
-                np.asarray(pcd.project_to_depth_image(
-                                                intrinsics=intrinsic,
-                                                extrinsic = extrinsic,
-                                                depth_scale=1000.0,
-                                                depth_max=100.0)))
-        depth_img = np.asarray(depth)
-        depth_map_cm_uint16 = depth_img.astype(np.uint16)
-        return depth_map_cm_uint16
+        extrinsic = torch.tensor(pose.T_inv, dtype=torch.float32)  # shape (4, 4)
+        points_camera = points_homogeneous @ extrinsic.T  # shape (N, 4)
         
-    def run(self):
+        intrinsic = torch.tensor(self._camera.matrix, dtype=torch.float32)  # shape (3, 3)
+        
+        points_camera = points_camera[:, :3]
+        points_image = points_camera @ intrinsic.T  # shape (N, 3)
+        
+        points_image[:, :2] /= points_image[:, 2:3]
+        
+        depth = points_camera[:, 2]  # shape (N,)
+        
+        depth_image = torch.full((self._camera.height, self._camera.width), float('inf'), dtype=torch.float32)
+        
+        x_coords = points_image[:, 0].long()
+        y_coords = points_image[:, 1].long()
+        
+        valid_mask = (x_coords >= 0) & (x_coords < self._camera.width) & (y_coords >= 0) & (y_coords < self._camera.height)
+        x_coords = x_coords[valid_mask]
+        y_coords = y_coords[valid_mask]
+        depth = depth[valid_mask]
+        
+        depth_image[y_coords, x_coords] = torch.min(depth_image[y_coords, x_coords], depth)
+        
+        depth_image[depth_image == float('inf')] = 0
+        depth_image = (depth_image * 1000).clamp(10, 100000)
+        
+        depth_image_numpy = depth_image.numpy()
+        return depth_image_numpy.astype(np.uint16)
+
+    def get_depth_o3d(self, pose, points):
+        pcd = o3d.t.geometry.PointCloud(o3d.core.Tensor(np.array(points), dtype=o3d.core.Dtype.Float32))
+        intrinsic = o3d.core.Tensor([[self._camera.fx, 0, self._camera.cx],
+                                    [0, self._camera.fy, self._camera.cy],
+                                    [0, 0, 1]], dtype=o3d.core.Dtype.Float32)
+
+        extrinsic = o3d.core.Tensor(np.array(pose.T_inv, dtype=np.float32))
+        depth_image = pcd.project_to_depth_image(width=self._camera.width, 
+                                                height=self._camera.height, 
+                                                intrinsics=intrinsic,
+                                                extrinsics=extrinsic,
+                                                depth_scale=1000.0,
+                                                depth_max=100.0)
+        
+        depth_image = np.array(depth_image.cpu())
+        depth_map_cm_uint16 = depth_image.astype(np.uint16)
+        return depth_map_cm_uint16
+    
+    def save_whole_points(self):
+        points = []
+        idx = 0
+
+        while idx < self._las.header.point_count:
+            if self._las.gps_time[idx] < self._stop_time:
+                points.append([self._las.x[idx], self._las.y[idx], self._las.z[idx]])
+                idx += 1
+            else:
+                break
+
+        points = self.transform_points_body_to_camera(points)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D_density.ply"), points)
+        points = self.filter_point_cloud(points)
+        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D.ply"), points)
+        return points
+
+    def save_lidar_frame(self):
+        index = 0
+
         while True:
             cur_pose = self.poseNext()
             if cur_pose is None:
+                break
+            
+            if cur_pose.timestamp > self._stop_time:
                 break
 
             cur_points = self.pointsNext(cur_pose)
 
             if len(cur_points) == 0:
                 continue
-            
-            cur_image = self.imgNext(cur_pose)
-            
-            if cur_image == None:
-                continue
-            
-            # 保存图像和点云
-            cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_pose.timestamp}.png"), cur_image.img)
-
-            # depth_img = self.get_depth_image(cur_pose, self._las.xyz)
-            # cv2.imwrite(os.path.join(self.save_path, f"depth/{cur_pose.timestamp}.png"), depth_img)
 
             self.save_point_cloud_to_ply(os.path.join(self.save_path, f"point/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
 
-            with open( self.pose_txt, 'a') as ofs_pose, \
-                open( self.rgb_txt, 'a') as ofs_rgb, \
-                open( self.depth_txt, 'a') as ofs_depth, \
-                open( self.point_txt, 'a') as ofs_point:
+            with open( self.pose_lidar_txt, 'a') as ofs_pose:
 
-                if self._index == 0:  # 只在第一次写入时添加标题
+                if self.index == 0:  # 只在第一次写入时添加标题
                     ofs_pose.write("# timestamp tx ty tz qx qy qz qw\n")
-                    ofs_rgb.write("#  timestamp filename\n")
-                    ofs_point.write("#  timestamp filename\n")
-                    ofs_depth.write("#  timestamp filename\n")
-                    
-                ofs_rgb.write(f"{cur_pose.timestamp} rgb/{cur_pose.timestamp}.png\n")
-                ofs_point.write(f"{cur_pose.timestamp} point/{cur_pose.timestamp}.ply\n")
-                ofs_depth.write(f"{cur_pose.timestamp} depth/{cur_pose.timestamp}.png\n")
 
                 camera_pose = self.transform_pose_world_to_camera(cur_pose)
                 ofs_pose.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
                         f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
                 
-            self._index += 1
+            index += 1
 
-            print(self._index)
+            print(f"lidar frame id: {index}")
+    
+    def save_camera_frame(self):
+         index = 0
 
-            if self._index == 50:
+         while True:
+            cur_image = self.imgNext()
+            
+            if cur_image == None:
                 break
 
+            if cur_image.timestamp > self._stop_time:
+                break
+
+            # 保存图像和点云
+            cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_image.timestamp}.png"), cur_image.img)
+
+            # depth_img = self.get_depth_o3d(cur_image.pose, self.whole_points)
+            # cv2.imwrite(os.path.join(self.save_path, f"depth/{cur_image.timestamp}.png"), depth_img)
+
+            with open( self.pose_txt, 'a') as ofs_pose, \
+                open( self.rgb_txt, 'a') as ofs_rgb, \
+                open( self.depth_txt, 'a') as ofs_depth:
+
+                if index == 0:  # 只在第一次写入时添加标题
+                    ofs_pose.write("# timestamp tx ty tz qx qy qz qw\n")
+                    ofs_rgb.write("#  timestamp filename\n")
+                    ofs_depth.write("#  timestamp filename\n")
+                    
+                ofs_rgb.write(f"{cur_image.pose.timestamp} rgb/{cur_image.pose.timestamp}.png\n")
+                ofs_depth.write(f"{cur_image.timestamp} depth/{cur_image.pose.timestamp}.png\n")
+
+                camera_pose = self.transform_pose_world_to_camera(cur_image.pose)
+                ofs_pose.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
+                        f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
+            
+            index += 1
+
+            print(f"camera frame id: {index}")
+        
+    def save_camera_info(self):
         cameraInfo = " ".join([str(num) for num in self._camera.getlist()])
         with open(self.camera_txt, 'a') as ofs_camera:
             ofs_camera.write(f"{cameraInfo}\n")
 
-        whole_points = self.transform_points_body_to_camera(self._las.xyz)
-        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D_density.ply"), whole_points)
-        whole_points = self.filter_point_cloud(whole_points)
-        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D.ply"), whole_points)
-
+    def run(self):
+        # self.whole_points = self.save_whole_points()
+        # self.whole_points = self.read_ply(os.path.join(self.save_path, "points3D_density.ply"))
+        self.save_camera_frame()
+        self.save_camera_info()
+        self.save_lidar_frame()
         return True
 
  
@@ -357,8 +412,8 @@ if __name__ == "__main__":
                          0,0,-1,0,
                          0,0,0,1]).reshape((4,4)) 
     
-    camera_pose =  T @ tmp_T
+    T_c2b =  T @ tmp_T
     
     camera = Camera(0, "PINHOLE", 4000, 3000, 2071.184147, 2071.184147, 2051.995468, 1589.171711)
-    pp = PreProcess(pose_path, las_path, video_path, video_timestamp_path, camera_pose, save_path, camera)
+    pp = PreProcess(pose_path, las_path, video_path, video_timestamp_path, T_c2b, save_path, camera)
     pp.run()
