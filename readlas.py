@@ -8,27 +8,6 @@ import torch
 import struct
 from scipy.spatial.transform import Rotation, Slerp
 
-class Camera:
-    def __init__(self,id, model, width, height, fx, fy, cx, cy):
-        self.id = id
-        self.model = model
-        self.width = width
-        self.height = height
-        self.fx = fx
-        self.fy = fy
-        self.cx = cx
-        self.cy = cy
-
-    def getlist(self):
-        return [self.id,
-                self.model,
-                self.width,
-                self.height,
-                self.fx,
-                self.fy,
-                self.cx,
-                self.cy]
-
 class Pose:
     tdpose_format = '<I d d d d f f f f'  # Struct format string
     struct_size = struct.calcsize(tdpose_format)
@@ -52,11 +31,64 @@ class Pose:
         self.T = pose_T
         self.T_inv = np.linalg.inv(self.T)
 
+class Camera:
+    def __init__(self,id, model, width, height, fx, fy, cx, cy):
+        self.id = id
+        self.model = model
+        self.width = width
+        self.height = height
+        self.fx = fx
+        self.fy = fy
+        self.cx = cx
+        self.cy = cy
+
+    def getlist(self):
+        return [self.id,
+                self.model,
+                self.width,
+                self.height,
+                self.fx,
+                self.fy,
+                self.cx,
+                self.cy]
+
+class Lidar:
+    def __init__(self, id, bias, sigma):
+       pass
+    
+class Imu:
+    def __init__(self, id, bias, sigma):
+        self.id = id
+        self.bias = bias
+        self.sigma = sigma
+    
 class ImageFrame:
     def __init__(self, timestamp=0.0, img=None, pose=None):
         self.timestamp = timestamp
         self.img = img
         self.pose = pose
+
+class LidarFrame:
+    def __init__(self, timestamp=0.0, points=None, pose=None):
+        self.timestamp = timestamp
+        self.points = points
+        self.pose = pose
+
+class ImuFrame:
+    tdpose_format = '<d f f f f f f f f f f'  # Struct format string
+    struct_size = struct.calcsize(tdpose_format)
+    def __init__(self, timestamp, Accel_x, Accel_y, Accel_z, Gyro_x, Gyro_y, Gyro_z, Q0, Q1, Q2, Q3):
+        self.timestamp = timestamp
+        self.Accel_x = Accel_x
+        self.Accel_y = Accel_y
+        self.Accel_z = Accel_z
+        self.Gyro_x = Gyro_x
+        self.Gyro_y = Gyro_y
+        self.Gyro_z = Gyro_z
+        self.Q0 = Q0
+        self.Q1 = Q1
+        self.Q2 = Q2
+        self.Q3 = Q3
 
 
 
@@ -381,14 +413,28 @@ class PreProcess:
         self.save_lidar_frame()
         return True
 
+def readImu(path):
+    framelist = []
+    with open(path) as f:
+        data = f.read(ImuFrame.struct_size)
+        if not data:
+            return None
+
+        imu_data = struct.unpack(ImuFrame.tdpose_format, data)
+        framelist.append(ImuFrame(*imu_data)) 
+
+    return True
  
 if __name__ == "__main__":
     pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
     las_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
 
+    imu_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/20240312-030641_Lp_Imu.fmimr"
     video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
     video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
     save_path = "/home/rick/Datasets/Custom"
+
+    readImu(imu_path)
 
     T = np.array([-0.037767,
                             -0.001235,

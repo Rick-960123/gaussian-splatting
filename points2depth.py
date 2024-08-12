@@ -115,7 +115,7 @@ class PreProcess:
         
         points_image[:, :2] /= points_image[:, 2:3]
         
-        depth = points_camera[:, 2]  # shape (N,)
+        depth = torch.norm(points_camera, dim=1)  # shape (N,)
         
         depth_image = torch.full((self._camera.height, self._camera.width), float('inf'), dtype=torch.float32)
         
