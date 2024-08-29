@@ -8,6 +8,47 @@ import torch
 import struct
 from scipy.spatial.transform import Rotation, Slerp
 
+class IMUPose:
+    tdpose_format = '<d d d d d d d d d d d d d d d d d d d d d d'  # Struct format string
+    struct_size = struct.calcsize(tdpose_format)
+    def __init__(self, timestamp, yaw, pitch, roll, vx, vy, vz, px, py, pz,
+                 gyro_x_drift, gyro_y_drift, gyro_z_drift,
+                 acc_x_drift, acc_y_drift, acc_z_drift,
+                 scallor_gyro_x, scallor_gyro_y, scallor_gyro_z,
+                 scallor_acc_x, scallor_acc_y, scallor_acc_z):
+        self.timestamp = timestamp
+        self.yaw = yaw
+        self.pitch = pitch
+        self.roll = roll
+        self.vx = vx
+        self.vy = vy
+        self.vz = vz
+        self.px = px
+        self.py = py
+        self.pz = pz
+        self.gyro_x_drift = gyro_x_drift
+        self.gyro_y_drift = gyro_y_drift
+        self.gyro_z_drift = gyro_z_drift
+        self.acc_x_drift = acc_x_drift
+        self.acc_y_drift = acc_y_drift
+        self.acc_z_drift = acc_z_drift
+        self.scallor_gyro_x = scallor_gyro_x
+        self.scallor_gyro_y = scallor_gyro_y
+        self.scallor_gyro_z = scallor_gyro_z
+        self.scallor_acc_x = scallor_acc_x
+        self.scallor_acc_y = scallor_acc_y
+        self.scallor_acc_z = scallor_acc_z
+
+        self.R_sci = Rotation.from_euler("zyx", np.array([self.roll, self.pitch, self.yaw]))
+        self.R = self.R_sci.as_matrix()
+        self.q = self.R_sci.as_quat()
+        self.t = np.array([self.px, self.py, self.pz]).transpose()
+        pose_T = np.eye(4)
+        pose_T[:3,:3] = self.R
+        pose_T[:3,3] = self.t
+        self.T = pose_T
+        self.T_inv = np.linalg.inv(self.T)
+
 class Pose:
     tdpose_format = '<I d d d d f f f f'  # Struct format string
     struct_size = struct.calcsize(tdpose_format)
@@ -90,64 +131,19 @@ class ImuFrame:
         self.Q2 = Q2
         self.Q3 = Q3
 
+def readImu(path):
+    framelist = []
+    with open(path) as f:
+        data = f.read(ImuFrame.struct_size)
+        if not data:
+            return None
 
+        imu_data = struct.unpack(ImuFrame.tdpose_format, data)
+        framelist.append(ImuFrame(*imu_data)) 
 
-class PreProcess:
-    def __init__(self, pose_path, las_path, video_path, video_timestamp_path, T_c2b, save_path, camera, duration=200):
-        self._pose_file = open(pose_path, 'rb')  # Assuming binary read mode for pose file
+    return True
 
-        self._cap = cv2.VideoCapture(video_path)
-        self._las = laspy.read(las_path)
-
-        self._p_idx = 0
-        self._imgIdx = 0
-        self._lastVideoTime = 0
-        self.save_path = save_path
-        self.image_cache = queue.Queue()
-        self._videoTimeList = []
-        self._T_c2b = T_c2b
-        self._camera_time_error = 18
-        self._camera = camera
-        self._pose_list = []
-
-        with open(video_timestamp_path, 'r') as f:
-            for line in f:
-                self._videoTimeList.append(float(line.strip()) + self._camera_time_error)
-        
-        while True:
-            cur_pose = self.poseNext()
-            if cur_pose is None:
-                break
-            self._pose_list.append(cur_pose)
-        
-        self._stop_time = self._pose_list[0].timestamp + duration
-
-        # Ensure directories exist
-        os.makedirs(os.path.join(save_path, "rgb"), exist_ok=True)
-        os.makedirs(os.path.join(save_path, "depth"), exist_ok=True)
-        os.makedirs(os.path.join(save_path, "point"), exist_ok=True)
-
-        self.pose_txt = os.path.join(self.save_path, "groundtruth.txt")
-        self.pose_lidar_txt = os.path.join(self.save_path, "groundtruth_lidar.txt")
-        self.rgb_txt = os.path.join(self.save_path, "rgb.txt")
-        self.depth_txt = os.path.join(self.save_path, "depth.txt")
-        self.point_txt = os.path.join(self.save_path, "point.txt")
-        self.camera_txt =  os.path.join(self.save_path, "cameras.txt")
-
-        if os.path.exists(self.depth_txt):
-            os.remove(self.depth_txt)
-        if os.path.exists(self.rgb_txt):
-            os.remove(self.rgb_txt)
-        if os.path.exists(self.point_txt):
-            os.remove(self.point_txt)
-        if os.path.exists(self.pose_txt):
-            os.remove(self.pose_txt)
-        if os.path.exists(self.pose_lidar_txt):
-            os.remove(self.pose_lidar_txt)
-        if os.path.exists(self.camera_txt):
-            os.remove(self.camera_txt)
-
-    def insert_pose(self, timestamp, before_pose, after_pose):
+def insert_pose(timestamp, before_pose, after_pose):
         rate = (timestamp - before_pose.timestamp) / (after_pose.timestamp - before_pose.timestamp)
         t = (after_pose.t - before_pose.t)/rate + before_pose.t
         key_rotations = Rotation.from_quat([before_pose.q, after_pose.q])
@@ -156,10 +152,56 @@ class PreProcess:
         cur_pose = Pose(100000, timestamp, *t, *q)
         return cur_pose
 
+
+class PreProcess:
+    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, T_c2b, save_path, camera, duration=200):
+        self._pose_file = open(pose_path, 'rb')  # Assuming binary read mode for pose file
+        self._imu_pose_file = open(imu_pose_path, 'rb')  # Assuming binary read mode for pose file
+
+        self._cap = cv2.VideoCapture(video_path)
+        self._las = laspy.read(las_path)
+
+        self._point_idx = 0
+        self._img_idx = 0
+        self._pose_idx = 0
+        self._imu_pose_idx = 0
+
+        self._lastVideoTime = 0
+        self._save_path = save_path
+        self._videoTimeList = []
+        self._T_c2b = T_c2b
+        self._camera_time_error = 18
+        self._camera = camera
+        self._imu_pose_list = []
+
+        with open(video_timestamp_path, 'r') as f:
+            for line in f:
+                self._videoTimeList.append(float(line.strip()) + self._camera_time_error)
+        
+        while True:
+            cur_pose = self.imuPoseNext()
+            if cur_pose is None:
+                break
+            self._imu_pose_list.append(cur_pose)
+        
+        self._stop_time = self._imu_pose_list[0].timestamp + duration
+
+        # Ensure directories exist
+        os.makedirs(os.path.join(self._save_path, "rgb"), exist_ok=True)
+        os.makedirs(os.path.join(self._save_path, "depth"), exist_ok=True)
+        os.makedirs(os.path.join(self._save_path, "point"), exist_ok=True)
+
+        self.pose_img_txt = os.path.join(self._save_path, "groundtruth.txt")
+        self.pose_lidar_txt = os.path.join(self._save_path, "groundtruth_lidar.txt")
+        self.rgb_txt = os.path.join(self._save_path, "rgb.txt")
+        self.depth_txt = os.path.join(self._save_path, "depth.txt")
+        self.point_txt = os.path.join(self._save_path, "point.txt")
+        self.camera_txt =  os.path.join(self._save_path, "cameras.txt")
+
     def imgNext(self):
         cur_image = ImageFrame()
-        first_pose = self._pose_list[0]
-        latest_pose = self._pose_list[-1]
+        first_pose = self._imu_pose_list[0]
+        latest_pose = self._imu_pose_list[-1]
 
         while True:
             if not self._cap.isOpened():
@@ -168,9 +210,9 @@ class PreProcess:
             ret, frame = self._cap.read()
             if ret and frame is not None:
                 cur_image.img = frame
-                if self._imgIdx < len(self._videoTimeList):
-                    cur_image.timestamp = self._videoTimeList[self._imgIdx]
-                    self._imgIdx += 1
+                if self._img_idx < len(self._videoTimeList):
+                    cur_image.timestamp = self._videoTimeList[self._img_idx]
+                    self._img_idx += 1
                     self._lastVideoTime = cur_image.timestamp
                 else:
                     print(f"\n\nend of video time list {self._lastVideoTime}\n")
@@ -180,10 +222,11 @@ class PreProcess:
                         
             if cur_image.timestamp >= first_pose.timestamp and cur_image.timestamp <= latest_pose.timestamp:
                 break
-        
-        for i in range(len(self._pose_list) - 1):
-            before_pose = self._pose_list[i]
-            after_pose = self._pose_list[i+1]
+
+        while self._imu_pose_index < len(self._imu_pose_list):
+            before_pose = self._imu_pose_list[self._imu_pose_index]
+            after_pose = self._imu_pose_list[self._imu_pose_index + 1]
+            self._imu_pose_index += 1
             if before_pose.timestamp <= cur_image.timestamp and cur_image.timestamp <= after_pose.timestamp:
                 cur_image.pose = self.insert_pose(cur_image.timestamp, before_pose, after_pose)
                 break
@@ -193,10 +236,10 @@ class PreProcess:
     def pointsNext(self, cur_pose):
         points = []
 
-        while self._p_idx < self._las.header.point_count:
-            if self._las.gps_time[self._p_idx] < cur_pose.timestamp:
-                points.append([self._las.x[self._p_idx], self._las.y[self._p_idx], self._las.z[self._p_idx]])
-                self._p_idx += 1
+        while self._point_idx < self._las.header.point_count:
+            if self._las.gps_time[self._point_idx] < cur_pose.timestamp:
+                points.append([self._las.x[self._point_idx], self._las.y[self._point_idx], self._las.z[self._point_idx]])
+                self._point_idx += 1
             else:
                 break
         points = np.array(points)
@@ -206,6 +249,18 @@ class PreProcess:
         points = self._las.xyz
         return points
 
+    def imuPoseNext(self):
+        data = self._imu_pose_file.read(IMUPose.struct_size)
+        if not data:
+            return None
+
+        pose_data = struct.unpack(IMUPose.tdpose_format, data)
+        imu_pose = IMUPose(*pose_data)
+        pose = Pose(self._imu_pose_idx, imu_pose.timestamp, *(imu_pose.t), *(imu_pose.q))
+        self._imu_pose_idx += 1
+
+        return pose
+    
     def poseNext(self):
         data = self._pose_file.read(Pose.struct_size)
         if not data:
@@ -325,13 +380,17 @@ class PreProcess:
             else:
                 break
 
-        points = self.transform_points_body_to_camera(points)
-        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D_density.ply"), points)
-        points = self.filter_point_cloud(points)
-        self.save_point_cloud_to_ply(os.path.join(self.save_path, "points3D.ply"), points)
-        return points
+        self.whole_points = self.transform_points_body_to_camera(points)
+        self.save_point_cloud_to_ply(os.path.join(self._save_path, "points3D_density.ply"), self.whole_points)
+        points = self.filter_point_cloud(self.whole_points)
+        self.save_point_cloud_to_ply(os.path.join(self._save_path, "points3D.ply"), points)
 
     def save_lidar_frame(self):
+        if os.path.exists(self.point_txt):
+            os.remove(self.point_txt)
+        if os.path.exists(self.pose_lidar_txt):
+            os.remove(self.pose_lidar_txt)
+
         index = 0
 
         while True:
@@ -347,25 +406,32 @@ class PreProcess:
             if len(cur_points) == 0:
                 continue
 
-            self.save_point_cloud_to_ply(os.path.join(self.save_path, f"point/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
+            self.save_point_cloud_to_ply(os.path.join(self._save_path, f"point/{cur_pose.timestamp}.ply"), self.transform_points_body_to_camera(self.transform_points_world_to_body(cur_points, cur_pose)))
 
-            with open( self.pose_lidar_txt, 'a') as ofs_pose:
-
-                if self.index == 0:  # 只在第一次写入时添加标题
+            with open( self.pose_lidar_txt, 'a') as ofs_pose, \
+                open( self.point_txt, 'a') as ofs_point:
+                if index == 0:  # 只在第一次写入时添加标题
                     ofs_pose.write("# timestamp tx ty tz qx qy qz qw\n")
-
+                    ofs_point.write("# timestamp filename\n")
                 camera_pose = self.transform_pose_world_to_camera(cur_pose)
                 ofs_pose.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
                         f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
-                
+                ofs_point.write(f"{cur_pose.timestamp} point/{cur_pose.timestamp}.ply\n")
             index += 1
 
             print(f"lidar frame id: {index}")
     
     def save_camera_frame(self):
-         index = 0
+        if os.path.exists(self.depth_txt):
+            os.remove(self.depth_txt)
+        if os.path.exists(self.rgb_txt):
+            os.remove(self.rgb_txt)
+        if os.path.exists(self.pose_txt):
+            os.remove(self.pose_txt)
 
-         while True:
+        index = 0
+
+        while True:
             cur_image = self.imgNext()
             
             if cur_image == None:
@@ -375,19 +441,20 @@ class PreProcess:
                 break
 
             # 保存图像和点云
-            cv2.imwrite(os.path.join(self.save_path, f"rgb/{cur_image.timestamp}.png"), cur_image.img)
+            cv2.imwrite(os.path.join(self._save_path, f"rgb/{cur_image.timestamp}.png"), cur_image.img)
 
-            # depth_img = self.get_depth_o3d(cur_image.pose, self.whole_points)
-            # cv2.imwrite(os.path.join(self.save_path, f"depth/{cur_image.timestamp}.png"), depth_img)
+            if self.whole_points: 
+                depth_img = self.get_depth_o3d(cur_image.pose, self.whole_points)
+                cv2.imwrite(os.path.join(self._save_path, f"depth/{cur_image.timestamp}.png"), depth_img)
 
-            with open( self.pose_txt, 'a') as ofs_pose, \
+            with open( self.pose_img_txt, 'a') as ofs_pose, \
                 open( self.rgb_txt, 'a') as ofs_rgb, \
                 open( self.depth_txt, 'a') as ofs_depth:
 
                 if index == 0:  # 只在第一次写入时添加标题
                     ofs_pose.write("# timestamp tx ty tz qx qy qz qw\n")
-                    ofs_rgb.write("#  timestamp filename\n")
-                    ofs_depth.write("#  timestamp filename\n")
+                    ofs_rgb.write("# timestamp filename\n")
+                    ofs_depth.write("# timestamp filename\n")
                     
                 ofs_rgb.write(f"{cur_image.pose.timestamp} rgb/{cur_image.pose.timestamp}.png\n")
                 ofs_depth.write(f"{cur_image.timestamp} depth/{cur_image.pose.timestamp}.png\n")
@@ -401,31 +468,23 @@ class PreProcess:
             print(f"camera frame id: {index}")
         
     def save_camera_info(self):
+        if os.path.exists(self.camera_txt):
+            os.remove(self.camera_txt)
         cameraInfo = " ".join([str(num) for num in self._camera.getlist()])
         with open(self.camera_txt, 'a') as ofs_camera:
             ofs_camera.write(f"{cameraInfo}\n")
 
     def run(self):
-        # self.whole_points = self.save_whole_points()
-        # self.whole_points = self.read_ply(os.path.join(self.save_path, "points3D_density.ply"))
+        # self.save_whole_points()
         self.save_camera_frame()
         self.save_camera_info()
         self.save_lidar_frame()
         return True
 
-def readImu(path):
-    framelist = []
-    with open(path) as f:
-        data = f.read(ImuFrame.struct_size)
-        if not data:
-            return None
 
-        imu_data = struct.unpack(ImuFrame.tdpose_format, data)
-        framelist.append(ImuFrame(*imu_data)) 
-
-    return True
  
 if __name__ == "__main__":
+    imu_pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/IMUPOS.bin"
     pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
     las_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
 
@@ -433,8 +492,6 @@ if __name__ == "__main__":
     video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
     video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
     save_path = "/home/rick/Datasets/Custom"
-
-    readImu(imu_path)
 
     T = np.array([-0.037767,
                             -0.001235,
@@ -461,5 +518,5 @@ if __name__ == "__main__":
     T_c2b =  T @ tmp_T
     
     camera = Camera(0, "PINHOLE", 4000, 3000, 2071.184147, 2071.184147, 2051.995468, 1589.171711)
-    pp = PreProcess(pose_path, las_path, video_path, video_timestamp_path, T_c2b, save_path, camera)
+    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, T_c2b, save_path, camera)
     pp.run()
