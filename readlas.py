@@ -131,27 +131,6 @@ class ImuFrame:
         self.Q2 = Q2
         self.Q3 = Q3
 
-def readImu(path):
-    framelist = []
-    with open(path) as f:
-        data = f.read(ImuFrame.struct_size)
-        if not data:
-            return None
-
-        imu_data = struct.unpack(ImuFrame.tdpose_format, data)
-        framelist.append(ImuFrame(*imu_data)) 
-
-    return True
-
-def insert_pose(timestamp, before_pose, after_pose):
-        rate = (timestamp - before_pose.timestamp) / (after_pose.timestamp - before_pose.timestamp)
-        t = (after_pose.t - before_pose.t)/rate + before_pose.t
-        key_rotations = Rotation.from_quat([before_pose.q, after_pose.q])
-        slerp = Slerp(np.array([before_pose.timestamp, after_pose.timestamp]), key_rotations)
-        q = slerp(np.array([timestamp]))[0].as_quat()
-        cur_pose = Pose(100000, timestamp, *t, *q)
-        return cur_pose
-
 
 class PreProcess:
     def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, T_c2b, save_path, camera, duration=200):
@@ -165,6 +144,7 @@ class PreProcess:
         self._img_idx = 0
         self._pose_idx = 0
         self._imu_pose_idx = 0
+        self._img_pose_idx = 0
 
         self._lastVideoTime = 0
         self._save_path = save_path
@@ -173,6 +153,7 @@ class PreProcess:
         self._camera_time_error = 18
         self._camera = camera
         self._imu_pose_list = []
+        self._whole_points = None
 
         with open(video_timestamp_path, 'r') as f:
             for line in f:
@@ -223,10 +204,10 @@ class PreProcess:
             if cur_image.timestamp >= first_pose.timestamp and cur_image.timestamp <= latest_pose.timestamp:
                 break
 
-        while self._imu_pose_index < len(self._imu_pose_list):
-            before_pose = self._imu_pose_list[self._imu_pose_index]
-            after_pose = self._imu_pose_list[self._imu_pose_index + 1]
-            self._imu_pose_index += 1
+        while self._img_pose_idx < len(self._imu_pose_list):
+            before_pose = self._imu_pose_list[self._img_pose_idx]
+            after_pose = self._imu_pose_list[self._img_pose_idx + 1]
+            self._img_pose_idx += 1
             if before_pose.timestamp <= cur_image.timestamp and cur_image.timestamp <= after_pose.timestamp:
                 cur_image.pose = self.insert_pose(cur_image.timestamp, before_pose, after_pose)
                 break
@@ -248,6 +229,27 @@ class PreProcess:
     def getAllPoints(self):
         points = self._las.xyz
         return points
+    
+    def readImu(self, path):
+        framelist = []
+        with open(path) as f:
+            data = f.read(ImuFrame.struct_size)
+            if not data:
+                return None
+
+            imu_data = struct.unpack(ImuFrame.tdpose_format, data)
+            framelist.append(ImuFrame(*imu_data)) 
+
+        return True
+
+    def insert_pose(self, timestamp, before_pose, after_pose):
+        rate = (timestamp - before_pose.timestamp) / (after_pose.timestamp - before_pose.timestamp)
+        t = (after_pose.t - before_pose.t)/rate + before_pose.t
+        key_rotations = Rotation.from_quat([before_pose.q, after_pose.q])
+        slerp = Slerp(np.array([before_pose.timestamp, after_pose.timestamp]), key_rotations)
+        q = slerp(np.array([timestamp]))[0].as_quat()
+        cur_pose = Pose(100000, timestamp, *t, *q)
+        return cur_pose
 
     def imuPoseNext(self):
         data = self._imu_pose_file.read(IMUPose.struct_size)
@@ -380,9 +382,9 @@ class PreProcess:
             else:
                 break
 
-        self.whole_points = self.transform_points_body_to_camera(points)
-        self.save_point_cloud_to_ply(os.path.join(self._save_path, "points3D_density.ply"), self.whole_points)
-        points = self.filter_point_cloud(self.whole_points)
+        self._whole_points = self.transform_points_body_to_camera(points)
+        self.save_point_cloud_to_ply(os.path.join(self._save_path, "points3D_density.ply"), self._whole_points)
+        points = self.filter_point_cloud(self._whole_points)
         self.save_point_cloud_to_ply(os.path.join(self._save_path, "points3D.ply"), points)
 
     def save_lidar_frame(self):
@@ -426,8 +428,8 @@ class PreProcess:
             os.remove(self.depth_txt)
         if os.path.exists(self.rgb_txt):
             os.remove(self.rgb_txt)
-        if os.path.exists(self.pose_txt):
-            os.remove(self.pose_txt)
+        if os.path.exists(self.pose_img_txt):
+            os.remove(self.pose_img_txt)
 
         index = 0
 
@@ -443,8 +445,8 @@ class PreProcess:
             # 保存图像和点云
             cv2.imwrite(os.path.join(self._save_path, f"rgb/{cur_image.timestamp}.png"), cur_image.img)
 
-            if self.whole_points: 
-                depth_img = self.get_depth_o3d(cur_image.pose, self.whole_points)
+            if self._whole_points: 
+                depth_img = self.get_depth_o3d(cur_image.pose, self._whole_points)
                 cv2.imwrite(os.path.join(self._save_path, f"depth/{cur_image.timestamp}.png"), depth_img)
 
             with open( self.pose_img_txt, 'a') as ofs_pose, \
@@ -484,13 +486,13 @@ class PreProcess:
 
  
 if __name__ == "__main__":
-    imu_pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/IMUPOS.bin"
-    pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
-    las_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
+    imu_pose_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/2024-04-23_13-46-50_570/IMUPOS.bin"
+    pose_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
+    las_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
 
-    imu_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/20240312-030641_Lp_Imu.fmimr"
-    video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
-    video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
+    imu_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/20240312-030641_Lp_Imu.fmimr"
+    video_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
+    video_timestamp_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
     save_path = "/home/rick/Datasets/Custom"
 
     T = np.array([-0.037767,
