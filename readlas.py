@@ -244,7 +244,7 @@ class PreProcess:
 
     def insert_pose(self, timestamp, before_pose, after_pose):
         rate = (timestamp - before_pose.timestamp) / (after_pose.timestamp - before_pose.timestamp)
-        t = (after_pose.t - before_pose.t)/rate + before_pose.t
+        t = (after_pose.t - before_pose.t) * rate + before_pose.t
         key_rotations = Rotation.from_quat([before_pose.q, after_pose.q])
         slerp = Slerp(np.array([before_pose.timestamp, after_pose.timestamp]), key_rotations)
         q = slerp(np.array([timestamp]))[0].as_quat()
