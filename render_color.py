@@ -10,9 +10,9 @@ def read_ply(path):
     return pcd.points
 
 def render_color():
-    points = read_ply("/home/rick/Datasets/Custom_tum/points/184087.380093.ply")
+    points = read_ply("/home/rick/Datasets/Custom/point/184087.380093.ply")
     points = np.hstack((points, np.array([[0,0,0] for i in range(len(points))])))
-    img = cv2.imread("/home/rick/Datasets/Custom_tum/rgb/184087.380093.png")
+    img = cv2.imread("/home/rick/Datasets/Custom/rgb/184082.903685.png")
     K = np.array([2071.184147  ,0 , 2051.995468, 0, 2071.184147,  1589.171711, 0, 0, 1]).reshape((3,3))
 
     for p in points:
@@ -33,7 +33,7 @@ def render_color():
     pcd.colors = o3d.utility.Vector3dVector(tmp[:,3:])
     pcd.normals  = o3d.utility.Vector3dVector(np.zeros((tmp.shape[0], 3)))
     # 保存为PLY文件
-    o3d.io.write_point_cloud("/home/rick/Datasets/Custom_tum/color.ply", pcd)
+    o3d.io.write_point_cloud("./color.ply", pcd)
 
 class Pose:
     tdpose_format = '<I d d d d f f f f'  # Struct format string
@@ -94,4 +94,5 @@ def body2world():
                 np.vstack((all_points, transform_points_world_to_body(points, pose)))
     save_point_cloud_to_ply("./test.ply",all_points)
 
-body2world()
+# body2world()
+render_color()
