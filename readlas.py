@@ -1,11 +1,11 @@
 import cv2
 import numpy as np
-import queue
 import os
 import open3d as o3d
 import laspy
 import torch
 import struct
+import yaml
 from scipy.spatial.transform import Rotation, Slerp
 
 class IMUPose:
@@ -73,15 +73,138 @@ class Pose:
         self.T_inv = np.linalg.inv(self.T)
 
 class Camera:
-    def __init__(self,id, model, width, height, fx, fy, cx, cy):
-        self.id = id
-        self.model = model
-        self.width = width
-        self.height = height
-        self.fx = fx
-        self.fy = fy
-        self.cx = cx
-        self.cy = cy
+    def __init__(self, yaml_path, crop_image=True):
+        with open(yaml_path, 'r') as file:
+            config = yaml.safe_load(file)
+            camera_param = config['parameters']["param"]['camera_instrinsic_parameters_opt_cam']
+            
+            # 转换矩阵
+            T_imu2clrcam = np.array(config['parameters']["param"]['T_imu2optcam_refine']).reshape(4, 4)
+            tmp_T = np.array([1,0,0,0,
+                         0,-1,0,0,
+                         0,0,-1,0,
+                         0,0,0,1]).reshape((4,4)) 
+    
+            self.T_c2b =  T_imu2clrcam @ tmp_T
+
+            self.id = 0
+            self.model = "PINHOLE"
+            self.width_d = camera_param[0]
+            self.height_d = camera_param[1]
+            self.cx_d = camera_param[3]
+            self.cy_d = camera_param[4]
+            self.fx_d = camera_param[5]
+            self.fy_d = camera_param[5]
+            self.distortion = camera_param[6:]
+
+        if crop_image:
+            self.crop_top = 250
+            self.crop_right = 250
+        else:
+            self.crop_top = 0
+            self.crop_right = 0
+
+        self.width = self.width_d - self.crop_right
+        self.height = self.height_d - self.crop_top
+        self.cx = self.width / 2 - self.crop_right
+        self.cy = self.height / 2 - self.crop_top
+        self.fx = self.fx_d
+        self.fy = self.fy_d
+        self.init_undistort_map()
+
+    def calibrate_image(self, image):
+        """
+        图像去畸变
+        Args:
+            image: OpenCV格式的输入图像
+        Returns:
+            undistorted: 去畸变后的图像
+        """
+        return cv2.remap(image, self.undistort_map[:,:,0], self.undistort_map[:,:,1], cv2.INTER_LINEAR)
+    
+    def calibrate_and_crop_image(self, image):
+        undistorted = self.calibrate_image(image)
+        # 裁剪参数
+        # 裁剪图像
+        height, width = undistorted.shape[:2]
+        cropped_image = undistorted[self.crop_top:, :(width-self.crop_right)]
+        return cropped_image
+    
+    def init_undistort_map(self):
+        self.undistort_map = np.zeros((self.height, self.width, 2), dtype=np.float32)
+        
+        center = True
+        # 获取图像尺寸
+        rows, cols = self.height, self.width
+        
+        # 初始化参数
+        x0 = self.cx_d
+        y0 = self.cy_d
+        k1, k2, k3, k4 = self.distortion[:4]
+        p1, p2 = self.distortion[4:6]
+        alpha, beta = self.distortion[6:8]
+        k5, k6 = 0, 0  # 额外的畸变参数设为0
+        
+        # 计算中心偏移
+        dx0 = x0 - 0.5 * (self.width - 1)
+        dy0 = y0 - 0.5 * (self.height - 1)
+        
+        if not center:
+            dx0 = dy0 = 0
+        
+        # 对每个像素进行处理
+        for ir in range(rows):
+            for ic in range(cols):
+                r = rows - 1 - ir  # 图像坐标系转换
+                x = float(ic)
+                y = float(r)
+                
+                # 添加偏移
+                x += dx0
+                y += dy0
+                ix, iy = x, y
+                
+                # 迭代求解去畸变映射
+                dx = [0, 0]
+                dy = [0, 0]
+                
+                for k in range(100):
+                    cx = x - x0
+                    cy = y - y0
+                    cxy = cx * cy
+                    cx2 = cx * cx
+                    cy2 = cy * cy
+                    
+                    r2 = cx2 + cy2
+                    r4 = r2 * r2
+                    r6 = r2 * r4
+                    r8 = r4 * r4
+                    r10 = r4 * r6
+                    r12 = r6 * r6
+                    
+                    t0 = k1 * r2 + k2 * r4 + k3 * r6 + k4 * r8 + k5 * r10 + k6 * r12
+                    t1 = r2 + 2 * cx2
+                    t2 = r2 + 2 * cy2
+                    
+                    dx[0] = dx[1]
+                    dy[0] = dy[1]
+                    
+                    dx[1] = cx * t0 + p1 * t1 + 2 * p2 * cxy + alpha * cx + beta * cy
+                    dy[1] = cy * t0 + p2 * t2 + 2 * p1 * cxy
+                    
+                    x = ix - dx[1]
+                    y = iy - dy[1]
+                    
+                    if abs(dx[1] - dx[0]) < 0.05 and abs(dy[1] - dy[0]) < 0.05:
+                        break
+                
+                # 坐标系转换回来
+                r = rows - 1 - r
+                y = rows - 1 - y
+                
+                # 检查边界条件
+                if x >= 0 and x < cols and y >= 0 and y < rows:
+                    self.undistort_map[r, ic] = [x, y]
 
     def getlist(self):
         return [self.id,
@@ -92,10 +215,6 @@ class Camera:
                 self.fy,
                 self.cx,
                 self.cy]
-
-class Lidar:
-    def __init__(self, id, bias, sigma):
-       pass
     
 class Imu:
     def __init__(self, id, bias, sigma):
@@ -133,7 +252,7 @@ class ImuFrame:
 
 
 class PreProcess:
-    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, T_c2b, save_path, camera, duration=200):
+    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, save_path, camera, duration=200):
         self._pose_file = open(pose_path, 'rb')  # Assuming binary read mode for pose file
         self._imu_pose_file = open(imu_pose_path, 'rb')  # Assuming binary read mode for pose file
 
@@ -149,7 +268,7 @@ class PreProcess:
         self._lastVideoTime = 0
         self._save_path = save_path
         self._videoTimeList = []
-        self._T_c2b = T_c2b
+        self._T_c2b = camera.T_c2b
         self._camera_time_error = 18
         self._camera = camera
         self._imu_pose_list = []
@@ -211,7 +330,8 @@ class PreProcess:
             if before_pose.timestamp <= cur_image.timestamp and cur_image.timestamp <= after_pose.timestamp:
                 cur_image.pose = self.insert_pose(cur_image.timestamp, before_pose, after_pose)
                 break
-
+        
+        cur_image.img = self._camera.calibrate_and_crop_image(cur_image.img)
         return cur_image
 
     def pointsNext(self, cur_pose):
@@ -486,39 +606,20 @@ class PreProcess:
 
  
 if __name__ == "__main__":
-    imu_pose_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/2024-04-23_13-46-50_570/IMUPOS.bin"
-    pose_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
-    las_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
 
-    imu_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/20240312-030641_Lp_Imu.fmimr"
-    video_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
-    video_timestamp_path = "/home/rick/Datasets/办公室一圈/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
-    save_path = "/home/rick/Datasets/Custom"
+    base_path = "/home/rick/Datasets/slam2000-雪乡情-正走"
+    save_path = os.path.join(base_path, "tum")
 
-    T = np.array([-0.037767,
-                            -0.001235,
-                            -0.999282,
-                            0.059832,
-                            -0.999215,
-                            -0.011807,
-                            0.037780,
-                            -0.001428,
-                            -0.011845,
-                            0.999924,
-                            -0.000787,
-                            0.017868,
-                            0.000000,
-                            0.000000,
-                            0.000000,
-                            1.000000]).reshape((4,4))
+    imu_pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/IMUPOS.bin")
+    pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.bin")
+    las_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.las")
+
+    imu_path = os.path.join(base_path, "SLAM_PRJ_001/20240312-030641_Lp_Imu.fmimr")
+    video_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265")
+    video_timestamp_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts")
     
-    tmp_T = np.array([1,0,0,0,
-                         0,-1,0,0,
-                         0,0,-1,0,
-                         0,0,0,1]).reshape((4,4)) 
+    yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
     
-    T_c2b =  T @ tmp_T
-    
-    camera = Camera(0, "PINHOLE", 4000, 3000, 2071.184147, 2071.184147, 2051.995468, 1589.171711)
-    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, T_c2b, save_path, camera)
+    camera = Camera(yaml_path)
+    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, save_path, camera)
     pp.run()
