@@ -597,10 +597,10 @@ class PreProcess:
             ofs_camera.write(f"{cameraInfo}\n")
 
     def run(self):
-        # self.save_whole_points()
-        self.save_camera_frame()
-        self.save_camera_info()
-        self.save_lidar_frame()
+        # self.save_camera_frame()
+        # self.save_camera_info()
+        # self.save_lidar_frame()
+        self.save_whole_points()
         return True
 
 

@@ -190,12 +190,13 @@ class PreProcess:
 
 
 if __name__ == "__main__":
-    pose_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin"
-    las_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las"
+    base_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001"
+    pose_path = os.path.join(base_path, "2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.bin")
+    las_path = os.path.join(base_path, "2024-04-23_13-46-50_570/optimised_2024-04-23_14-18-25_662.las")
 
-    video_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265"
-    video_timestamp_path = "/home/rick/Datasets/SN_00250/SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts"
-    save_path = "/home/rick/Datasets/Custom"
+    video_path = os.path.join(base_path, "OPTICAL_CAM/optcam_1.h265")
+    video_timestamp_path = os.path.join(base_path, "OPTICAL_CAM/optcam_1.ts")
+    save_path = os.path.join(base_path, "depth")
 
     T = np.array([-0.037767,
                             -0.001235,
