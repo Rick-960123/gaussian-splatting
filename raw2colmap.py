@@ -73,7 +73,7 @@ class Pose:
         self.T_inv = np.linalg.inv(self.T)
 
 class Camera:
-    def __init__(self, yaml_path, crop_image=True):
+    def __init__(self, yaml_path):
         with open(yaml_path, 'r') as file:
             config = yaml.safe_load(file)
             camera_param = config['parameters']["param"]['camera_instrinsic_parameters_opt_cam']
@@ -97,17 +97,10 @@ class Camera:
             self.fy_d = camera_param[5]
             self.distortion = camera_param[6:]
 
-        if crop_image:
-            self.crop_top = 250
-            self.crop_right = 250
-        else:
-            self.crop_top = 0
-            self.crop_right = 0
-
-        self.width = self.width_d - self.crop_right
-        self.height = self.height_d - self.crop_top
-        self.cx = self.width / 2 - self.crop_right
-        self.cy = self.height / 2 - self.crop_top
+        self.width = self.width_d
+        self.height = self.height_d
+        self.cx = self.width_d / 2
+        self.cy = self.height_d / 2
         self.fx = self.fx_d
         self.fy = self.fy_d
         self.init_undistort_map()
@@ -121,14 +114,6 @@ class Camera:
             undistorted: 去畸变后的图像
         """
         return cv2.remap(image, self.undistort_map[:,:,0], self.undistort_map[:,:,1], cv2.INTER_LINEAR)
-    
-    def calibrate_and_crop_image(self, image):
-        undistorted = self.calibrate_image(image)
-        # 裁剪参数
-        # 裁剪图像
-        height, width = undistorted.shape[:2]
-        cropped_image = undistorted[self.crop_top:, :(width-self.crop_right)]
-        return cropped_image
     
     def init_undistort_map(self):
         self.undistort_map = np.zeros((self.height, self.width, 2), dtype=np.float32)
@@ -289,14 +274,20 @@ class PreProcess:
         self._colmap_dir = os.path.join(self._save_path, "colmap")
         self._sparse_dir = os.path.join(self._colmap_dir, "sparse/0")
         self._images_dir = os.path.join(self._colmap_dir, "images")
+        self._masks_dir = os.path.join(self._colmap_dir, "masks")
         os.makedirs(self._sparse_dir, exist_ok=True)
         os.makedirs(self._images_dir, exist_ok=True)
+        os.makedirs(self._masks_dir, exist_ok=True)
 
         # 定义COLMAP文件路径
         self._colmap_cameras = os.path.join(self._sparse_dir, "cameras.bin")
         self._colmap_images = os.path.join(self._sparse_dir, "images.bin")
         self._colmap_points3D = os.path.join(self._sparse_dir, "points3D.bin")
         self._colmap_points3D_density = os.path.join(self._sparse_dir, "points3D_density.ply")
+
+        self.mask = np.ones((self._camera.height, self._camera.width), dtype=np.uint8) * 255
+        self.mask[:, -250:] = 0
+        self.mask[:250, :] = 0
 
     def imgNext(self):
         cur_image = ImageFrame()
@@ -331,7 +322,7 @@ class PreProcess:
                 cur_image.pose = self.insert_pose(cur_image.timestamp, before_pose, after_pose)
                 break
         
-        cur_image.img = self._camera.calibrate_and_crop_image(cur_image.img)
+        cur_image.img = self._camera.calibrate_image(cur_image.img)
         return cur_image
     
     def getAllPoints(self):
@@ -523,6 +514,7 @@ class PreProcess:
                 # 保存图像
                 image_name = f"{cur_image.timestamp}.png"
                 cv2.imwrite(os.path.join(self._images_dir, image_name), cur_image.img)
+                cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
                 camera_pose = self.transform_pose_world_to_camera(cur_image.pose)
                 
@@ -540,7 +532,7 @@ class PreProcess:
                 fid.write(struct.pack('B', 0))
                 fid.write(struct.pack('Q', 0))                
                 print(f"Saved camera frame: {image_count}")
-
+                
             # 更新图像总数
             fid.seek(0)
             fid.write(struct.pack('Q', image_count))
