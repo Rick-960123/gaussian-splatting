@@ -505,6 +505,6 @@ if __name__ == "__main__":
     video_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265")
     video_timestamp_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts")
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
-    imu_path = os.path.join(base_path, "SLAM_PRJ_001/20240312-030641_Lp_Imu.fmimr")
+    imu_path = os.path.join(base_path, "SLAM_PRJ_001/20241105-144253_Hp_Imu.fmimr")
     
     reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, imu_path)
