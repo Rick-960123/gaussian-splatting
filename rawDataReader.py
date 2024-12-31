@@ -426,7 +426,7 @@ class RawDataReader:
                 video_time_list.append(float(line.strip()) + self._camera.time_error)
         return video_time_list
 
-    def lidarNext(self, pose):
+    def lidarNext(self):
         if self._pose_idx >= len(self._pose_list):
             return None
         
@@ -480,11 +480,11 @@ class RawDataReader:
         return cur_image
     
     def test(self):
-        while True:
-            img_data = self.imgNext()
-            if img_data is None:
-                break
-            print(img_data.timestamp)
+        # while True:
+        #     img_data = self.imgNext()
+        #     if img_data is None:
+        #         break
+        #     print(img_data.timestamp)
         while True:
             lidar_data = self.lidarNext()
             if lidar_data is None:
