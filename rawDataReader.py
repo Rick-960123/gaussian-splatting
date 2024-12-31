@@ -368,7 +368,7 @@ class CommonTools:
         return pcd.points
 
 class RawDataReader:
-    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, imu_path):
+    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path):
         self._point_idx = 0
         self._img_idx = 0
         self._pose_idx = 0
@@ -385,7 +385,6 @@ class RawDataReader:
         self._video_time_list = self.readVideoTime(video_timestamp_path)
         self._pose_list = self.readPose(pose_path)
         self._imu_pose_list = self.readImuPose(imu_pose_path)
-        self._imu_frame_list = self.readImu(imu_path)
 
     def readLas(self, path):
         las = laspy.read(path)
@@ -426,20 +425,11 @@ class RawDataReader:
             for line in f:
                 video_time_list.append(float(line.strip()) + self._camera.time_error)
         return video_time_list
-      
-    def readImu(self, path):
-        imu_frame_list = []
-        with open(path) as f:
-            data = f.read(ImuFrame.struct_size)
-            if not data:
-                return None
-
-            imu_data = struct.unpack(ImuFrame.tdpose_format, data)
-            imu_frame_list.append(ImuFrame(*imu_data)) 
-
-        return imu_frame_list
 
     def lidarNext(self, pose):
+        if self._pose_idx >= len(self._pose_list):
+            return None
+        
         points = []
         pose = self._pose_list[self._pose_idx]
         self._pose_idx += 1
@@ -489,8 +479,17 @@ class RawDataReader:
         cur_image.img = self._camera.calibrateImage(cur_image.img)
         return cur_image
     
-    def imuDataNext(self):
-        return self._imu_frame_list[self._imu_frame_idx]
+    def test(self):
+        while True:
+            img_data = self.imgNext()
+            if img_data is None:
+                break
+            print(img_data.timestamp)
+        while True:
+            lidar_data = self.lidarNext()
+            if lidar_data is None:
+                break
+            print(lidar_data.timestamp)
     
 if __name__ == "__main__":
 
@@ -505,6 +504,6 @@ if __name__ == "__main__":
     video_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265")
     video_timestamp_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts")
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
-    imu_path = os.path.join(base_path, "SLAM_PRJ_001/20241105-144253_Hp_Imu.fmimr")
     
-    reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, imu_path)
+    reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path)
+    reader.test()
