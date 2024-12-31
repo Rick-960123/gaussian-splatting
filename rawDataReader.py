@@ -480,11 +480,11 @@ class RawDataReader:
         return cur_image
     
     def test(self):
-        # while True:
-        #     img_data = self.imgNext()
-        #     if img_data is None:
-        #         break
-        #     print(img_data.timestamp)
+        while True:
+            img_data = self.imgNext()
+            if img_data is None:
+                break
+            print(img_data.timestamp)
         while True:
             lidar_data = self.lidarNext()
             if lidar_data is None:
