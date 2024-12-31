@@ -408,7 +408,7 @@ class RawDataReader:
             while True:
                 data = imu_pose_file.read(IMUPose.struct_size)
                 if not data:
-                    return None
+                    break
 
                 pose_data = struct.unpack(IMUPose.tdpose_format, data)
                 imu_pose = IMUPose(*pose_data)
