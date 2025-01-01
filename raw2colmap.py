@@ -96,7 +96,7 @@ class PreProcess:
                 cur_image.pose = self.insert_pose(cur_image.timestamp, before_pose, after_pose)
                 break
         
-        cur_image.img = self._camera.calibrate_image(cur_image.img)
+        cur_image.img = self._camera.calibrateImage(cur_image.img)
         return cur_image
     
     def getAllPoints(self):
@@ -291,15 +291,17 @@ class PreProcess:
                 cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
                 camera_pose = self.transform_pose_world_to_camera(cur_image.pose)
-                
+                camera_extrinsic_quat = Rotation.from_matrix(camera_pose.T_inv[:3,:3]).as_quat()
+                camera_extrinsic_t = camera_pose.T_inv[:3,3]
+
                 # 写入图像参数
                 image_count += 1
                 fid.write(struct.pack('i', image_count))
                 fid.write(struct.pack('dddd', 
-                    camera_pose.qW, camera_pose.qX, 
-                    camera_pose.qY, camera_pose.qZ))
+                    camera_extrinsic_quat[0], camera_extrinsic_quat[1], 
+                    camera_extrinsic_quat[2], camera_extrinsic_quat[3]))
                 fid.write(struct.pack('ddd', 
-                    camera_pose.posX, camera_pose.posY, camera_pose.posZ))
+                    camera_extrinsic_t[0], camera_extrinsic_t[1], camera_extrinsic_t[2]))
                 fid.write(struct.pack('i', 1))  # camera_id
                 # 写入图像名称
                 fid.write(image_name.encode('utf-8'))
