@@ -120,6 +120,13 @@ class Camera:
         self.time_error = 18
         self.initUndistortMap()
 
+    def getCameraPose(self, cur_pose):
+        camera_pose_in_world = cur_pose.T @ self.T_c2b
+        pose_r = camera_pose_in_world[:3,:3]
+        pose_t = camera_pose_in_world[:3,3]
+        pose_q =  Rotation.from_matrix(pose_r).as_quat()
+        return Pose(cur_pose.id, cur_pose.timestamp, pose_t[0], pose_t[1], pose_t[2], pose_q[0], pose_q[1], pose_q[2], pose_q[3])
+    
     def calibrateImage(self, image):
         """
         图像去畸变
@@ -257,9 +264,7 @@ class ImuFrame:
         self.Q3 = Q3
 
 class CommonTools:
-    def __init__(self):
-        pass
-
+    @classmethod
     def insertPose(self, timestamp, before_pose, after_pose):
         rate = (timestamp - before_pose.timestamp) / (after_pose.timestamp - before_pose.timestamp)
         t = (after_pose.t - before_pose.t) * rate + before_pose.t
@@ -269,6 +274,7 @@ class CommonTools:
         cur_pose = Pose(100000, timestamp, *t, *q)
         return cur_pose
     
+    @classmethod
     def savePointCloudToPly(self, ply_file, point_cloud):
         tmp = np.array(point_cloud)
         pcd = o3d.geometry.PointCloud()
@@ -276,7 +282,8 @@ class CommonTools:
         pcd.colors = o3d.utility.Vector3dVector(np.zeros((tmp.shape[0], 3)))
         pcd.normals  = o3d.utility.Vector3dVector(np.zeros((tmp.shape[0], 3)))
         o3d.io.write_point_cloud(ply_file, pcd)
-
+    
+    @classmethod
     def filterPointCloud(self, points, size=0.1):
         tmp = np.array(points)
         pcd = o3d.geometry.PointCloud()
@@ -284,23 +291,16 @@ class CommonTools:
         down_sampled_pcd = pcd.voxel_down_sample(size)
         return down_sampled_pcd.points
 
-    def transformPointsWorldToBody(self, points, cur_pose):
+    @classmethod
+    def getPointsInBody(self, points, cur_pose):
         points = np.array(points).transpose()
         r = cur_pose.R.transpose()
         t = cur_pose.T_inv[:3:,3].reshape((3,1))
         points = (r@points + t).transpose()
         return points
     
-    def transformPoseWorldToCamera(self, cur_pose, T_c2b):
-        camera_pose_in_world = cur_pose.T @ T_c2b
-        camera_pose_in_new_world = np.linalg.inv(T_c2b) @ camera_pose_in_world
-        pose_r = camera_pose_in_new_world[:3,:3]
-        pose_t = camera_pose_in_new_world[:3,3]
-        pose_q =  Rotation.from_matrix(pose_r).as_quat()
-        trans_pose = Pose(cur_pose.id, cur_pose.timestamp, pose_t[0], pose_t[1], pose_t[2], pose_q[0], pose_q[1], pose_q[2], pose_q[3])
-        return trans_pose
-    
-    def transformPointsBodyToCamera(self, points, T_c2b):
+    @classmethod
+    def getPointsInCamera(self, points, T_c2b):
         points = np.array(points).transpose()
 
         T_b2c = np.linalg.inv(T_c2b)
@@ -310,12 +310,13 @@ class CommonTools:
         points = (r@points + t).transpose()
         return points
 
-    def getDepthImage(self, pose, points, camera):
+    @classmethod
+    def getDepthImage(self, camera_pose, points, camera):
         points = torch.tensor(np.array(points), dtype=torch.float32) 
         ones = torch.ones((points.shape[0], 1), dtype=torch.float32)
         points_homogeneous = torch.cat([points, ones], dim=1)  # shape (N, 4)
 
-        extrinsic = torch.tensor(pose.T_inv, dtype=torch.float32)  # shape (4, 4)
+        extrinsic = torch.tensor(camera_pose.T_inv, dtype=torch.float32)  # shape (4, 4)
         points_camera = points_homogeneous @ extrinsic.T  # shape (N, 4)
         
         intrinsic = torch.tensor(camera.matrix, dtype=torch.float32)  # shape (3, 3)
@@ -345,13 +346,14 @@ class CommonTools:
         depth_image_numpy = depth_image.numpy()
         return depth_image_numpy.astype(np.uint16)
 
-    def getDepthO3d(self, pose, points, camera):
+    @classmethod
+    def getDepthO3d(self, camera_pose, points, camera):
         pcd = o3d.t.geometry.PointCloud(o3d.core.Tensor(np.array(points), dtype=o3d.core.Dtype.Float32))
         intrinsic = o3d.core.Tensor([[camera.fx, 0, camera.cx],
                                     [0, camera.fy, camera.cy],
                                     [0, 0, 1]], dtype=o3d.core.Dtype.Float32)
 
-        extrinsic = o3d.core.Tensor(np.array(pose.T_inv, dtype=np.float32))
+        extrinsic = o3d.core.Tensor(np.array(camera_pose.T_inv, dtype=np.float32))
         depth_image = pcd.project_to_depth_image(width=camera.width, 
                                                 height=camera.height, 
                                                 intrinsics=intrinsic,
@@ -363,12 +365,13 @@ class CommonTools:
         depth_map_cm_uint16 = depth_image.astype(np.uint16)
         return depth_map_cm_uint16
     
+    @classmethod
     def readPly(self, path):
         pcd = o3d.io.read_point_cloud(path)
         return pcd.points
 
 class RawDataReader:
-    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path):
+    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, crop_image=False):
         self._point_idx = 0
         self._img_idx = 0
         self._pose_idx = 0
@@ -378,7 +381,7 @@ class RawDataReader:
         self._last_video_time = 0
 
         self._common_tools = CommonTools()
-        self._camera = Camera(yaml_path)
+        self._camera = Camera(yaml_path, crop_image)
         self._video_cap = cv2.VideoCapture(video_path)
 
         self._las = self.readLas(las_path)
