@@ -11,7 +11,7 @@ from rawDataReader import *
 
 class PreProcess:
     def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, duration=200):
-        self._raw_data_reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, crop_image=True)
+        self._raw_data_reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path)
         self._duration = duration
         self._save_path = save_path
         self._whole_points = self._raw_data_reader._las.xyz
