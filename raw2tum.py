@@ -20,10 +20,12 @@ class PreProcess:
         self.rgb_path = os.path.join(self._save_path, "rgb")
         self.depth_path = os.path.join(self._save_path, "depth")
         self.point_path = os.path.join(self._save_path, "point")
+        self.mask_dir = os.path.join(self._save_path, "mask")
 
         os.makedirs(self.rgb_path, exist_ok=True)
         os.makedirs(self.depth_path, exist_ok=True)
         os.makedirs(self.point_path, exist_ok=True)
+        os.makedirs(self.mask_dir, exist_ok=True)
 
         self.pose_img_txt = os.path.join(self._save_path, "groundtruth.txt")
         self.pose_lidar_txt = os.path.join(self._save_path, "groundtruth_lidar.txt")
@@ -31,7 +33,12 @@ class PreProcess:
         self.depth_txt = os.path.join(self._save_path, "depth.txt")
         self.point_txt = os.path.join(self._save_path, "point.txt")
         self.camera_txt =  os.path.join(self._save_path, "cameras.txt")
-    
+
+        self.mask = np.ones((self._raw_data_reader._camera.height, self._raw_data_reader._camera.width), dtype=np.uint8) * 255
+        self.mask[:, -150:] = 0
+        self.mask[:150, :] = 0
+        cv2.imwrite(os.path.join(self.mask_dir, "mask.png"), self.mask)
+
     def save_whole_points(self):
         CommonTools.savePointCloudToPly(os.path.join(self._save_path, "points3D_density.ply"), self._whole_points)
         points = CommonTools.filterPointCloud(self._whole_points)

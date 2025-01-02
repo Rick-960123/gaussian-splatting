@@ -31,8 +31,8 @@ class PreProcess:
         self._colmap_points3D_density = os.path.join(self._sparse_dir, "points3D_density.ply")
 
         self.mask = np.ones((self._raw_data_reader._camera.height, self._raw_data_reader._camera.width), dtype=np.uint8) * 255
-        self.mask[:, -250:] = 0
-        self.mask[:250, :] = 0
+        self.mask[:, -150:] = 0
+        self.mask[:150, :] = 0
    
     
     def save_whole_points(self):
