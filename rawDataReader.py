@@ -117,7 +117,7 @@ class Camera:
         self.fx = self.fx_d
         self.fy = self.fy_d
 
-        self.time_error = 18
+        self.utc_gps_time_diff = 18.0
         self.initUndistortMap()
 
     def getCameraPose(self, cur_pose):
@@ -426,7 +426,8 @@ class RawDataReader:
         video_time_list = []
         with open(path, 'r') as f:
             for line in f:
-                video_time_list.append(float(line.strip()) + self._camera.time_error)
+                #UTC时间 转换为 GPS时间
+                video_time_list.append(float(line.strip()) + self._camera.utc_gps_time_diff)
         return video_time_list
 
     def lidarNext(self):
@@ -463,9 +464,10 @@ class RawDataReader:
                     self._img_idx += 1
                     self._last_video_time = cur_image.timestamp
                 else:
-                    print(f"\n\nend of video time list {self._last_video_time}\n")
+                    print(f"\nend of video time list {self._last_video_time}\n")
+                    return None
             else:
-                print(f"\n\nend of video {self._last_video_time}\n")
+                print(f"\nend of video {self._last_video_time}\n")
                 return None
                         
             if cur_image.timestamp >= first_pose.timestamp and cur_image.timestamp <= latest_pose.timestamp:

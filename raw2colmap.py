@@ -51,7 +51,7 @@ class PreProcess:
                 fid.write(f"{point_id} {point[0]} {point[1]} {point[2]} 255 255 255 0.0\n")
 
     def save_camera_info(self):
-        with open(self._colmap_cameras, "a") as fid:
+        with open(self._colmap_cameras, "w") as fid:
             # 写入文件头注释
             fid.write("# Camera list with one line of data per camera:\n")
             fid.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
@@ -69,7 +69,7 @@ class PreProcess:
                      f"{params[0]} {params[1]} {params[2]} {params[3]}\n")
 
     def save_camera_frame(self):
-        with open(self._colmap_images, "a") as fid:
+        with open(self._colmap_images, "w") as fid:
             # 写入文件头注释
             fid.write("# Image list with two lines of data per image:\n")
             fid.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
