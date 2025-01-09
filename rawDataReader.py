@@ -80,12 +80,14 @@ class Camera:
             
             # 转换矩阵
             T_imu2clrcam = np.array(config['parameters']["param"]['T_imu2optcam_refine']).reshape(4, 4)
-            tmp_T = np.array([1,0,0,0,
-                         0,-1,0,0,
-                         0,0,-1,0,
-                         0,0,0,1]).reshape((4,4)) 
+
+            # tmp_T = np.array([1,0,0,0,
+            #              0,-1,0,0,
+            #              0,0,-1,0,
+            #              0,0,0,1]).reshape((4,4)) 
+            # T_imu2clrcam = tmp_T @ T_imu2clrcam
     
-            self.T_c2b =  T_imu2clrcam @ tmp_T
+            self.T_c2b =  T_imu2clrcam
 
             self.id = 1
             self.model = "PINHOLE"

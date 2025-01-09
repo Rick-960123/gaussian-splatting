@@ -12,7 +12,7 @@ import threading
 import os
 
 class ColmapPoseVisualizer:
-    def __init__(self, node_name, path):
+    def __init__(self, node_name, path, plot=False):
         # 创建发布器
         self.pose_pub = rospy.Publisher(f'/{node_name}/camera_poses', PoseStamped, queue_size=10)
         self.path_pub = rospy.Publisher(f'/{node_name}/camera_trajectory', Path, queue_size=10)
@@ -24,13 +24,17 @@ class ColmapPoseVisualizer:
         self.marker_id = 0
 
         self.scale = 1.0
+        self.plot = plot
+
         if node_name == "colmap2":
             self.scale = 0.741
 
         poses = self.read_images_text(path)
-        # self.publish_poses(poses)
-        new_thread = threading.Thread(target=self.publish_poses, args=(poses,))
-        new_thread.start()
+        if self.plot:
+            self.publish_poses(poses)
+        else:
+            new_thread = threading.Thread(target=self.publish_poses, args=(poses,))
+            new_thread.start()
 
     def read_images_text(self, path):
         """读取COLMAP的images.txt文件"""
@@ -63,20 +67,11 @@ class ColmapPoseVisualizer:
             pose[:3, :3] = rotation[:3, :3]
             pose[:3, 3] = np.array([tx, ty, tz]) * self.scale
 
-            tmp_T = np.array([1,0,0,0,
-                0,1,0,0,
-                0,0,-1,0,
-                0,0,0,1]).reshape((4,4)) 
-            
-            if self.scale == 1.0:
-                pose = tmp_T @ np.linalg.inv(pose)
-
             if first_pose_inv is None:
                 first_pose_inv = np.linalg.inv(pose)
                 print(f"First Image Name: {image_name}")
                 print("First Pose")
-                poses[image_id] = first_pose_inv @ pose
-                print(poses[image_id])
+                print(pose)
             
             poses[image_id] = first_pose_inv @ pose
         
@@ -126,16 +121,17 @@ class ColmapPoseVisualizer:
             
             rospy.sleep(0.01)  # 添加小延迟使可视化更流畅
 
-        # fig, ax = plt.subplots()
-        # ax.plot(imageids, x_data, label="Euler X", color='r')
-        # ax.plot(imageids, y_data, label="Euler Y", color='g')
-        # ax.plot(imageids, z_data, label="Euler Z", color='b')
+        if self.plot:
+            fig, ax = plt.subplots()
+            ax.plot(imageids, x_data, label="Euler X", color='r')
+            ax.plot(imageids, y_data, label="Euler Y", color='g')
+            ax.plot(imageids, z_data, label="Euler Z", color='b')
 
-        # ax.set_xlabel('imageId')
-        # ax.set_ylabel('Euler Angles')
-        # ax.set_title('XYZ Euler Angles Over Time')
-        # ax.legend()
-        # plt.show()
+            ax.set_xlabel('imageId')
+            ax.set_ylabel('Euler Angles')
+            ax.set_title('XYZ Euler Angles Over Time')
+            ax.legend()
+            plt.show()
 
         while not rospy.is_shutdown():
             pose_msg = PoseStamped()
@@ -160,10 +156,10 @@ def main():
     rospy.init_node("VisColMapPose", anonymous=True)
 
     colmap_path = "/home/rick/Datasets/slam2000-雪乡情-正走/colmap/sparse/0/images.txt"  # 修改为实际路径
-    colmap_path2 = "/home/rick/Downloads/1/images.txt"
+    colmap_path2 = "/home/rick/Datasets/slam2000-雪乡情-正走/colmap1/sparse/0/images.txt"
 
     ColmapPoseVisualizer("colmap", colmap_path)
-    # ColmapPoseVisualizer("colmap2", colmap_path2)
+    ColmapPoseVisualizer("colmap2", colmap_path2)
     rospy.spin()
 
 if __name__ == '__main__':
