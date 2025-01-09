@@ -96,8 +96,19 @@ class PreProcess:
                 cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
                 camera_pose = self._raw_data_reader._camera.getCameraPose(cur_image.pose)
-                camera_extrinsic_quat = Rotation.from_matrix(camera_pose.T_inv[:3,:3]).as_quat()
-                camera_extrinsic_t = camera_pose.T_inv[:3,3]
+
+                #右手系转左手系
+                tmp_T = np.array([1,0,0,0,
+                                0,1,0,0,
+                                0,0,-1,0,
+                                0,0,0,1]).reshape((4,4)) 
+
+                T_left = np.linalg.inv(tmp_T@camera_pose.T) 
+
+                pose = tmp_T @ np.linalg.inv(T_left)
+
+                camera_extrinsic_quat = Rotation.from_matrix(T_left[:3,:3]).as_quat()
+                camera_extrinsic_t = T_left[:3,3]
 
                 # 写入图像参数 - 第一行
                 image_count += 1
