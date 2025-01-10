@@ -142,5 +142,5 @@ if __name__ == "__main__":
     
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
     
-    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, 20)
+    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, 40)
     pp.run()
