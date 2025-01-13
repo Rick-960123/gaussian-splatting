@@ -62,22 +62,36 @@ class ColmapPoseVisualizer:
             image_name = str(data[9])
 
             # 构建位姿矩阵
-            pose = np.eye(4)
+            pose_inv = np.eye(4)
             rotation = tf.transformations.quaternion_matrix([qx, qy, qz, qw])
-            pose[:3, :3] = rotation[:3, :3]
-            pose[:3, 3] = np.array([tx, ty, tz]) * self.scale
-
+            pose_inv[:3, :3] = rotation[:3, :3]
+            pose_inv[:3, 3] = np.array([tx, ty, tz]) * self.scale
+            
+            
+            
             if first_pose_inv is None:
-                first_pose_inv = np.linalg.inv(pose)
+                first_pose_inv = pose_inv
                 print(f"First Image Name: {image_name}")
                 print("First Pose")
-                print(pose)
+                print(pose_inv)
             
-            poses[image_id] = first_pose_inv @ pose
-        
+            poses[image_id] = first_pose_inv @ np.linalg.inv(pose_inv)
+
+            tmp_T = np.array([1,0,0,0,
+                                0,0,-1,0,
+                                0,1,0,0,
+                                0,0,0,1]).reshape((4,4)) @ np.array([1,0,0,0,
+                                0,0,-1,0,
+                                0,-1,0,0,
+                                0,0,0,1]).reshape((4,4)) 
+            
+            poses[image_id] =  tmp_T @ poses[image_id]
+
             # 跳过下一行（包含特征点信息）
             line_index += 2
-        
+
+            if image_id == 602:
+                break
         print(f"End Pose Image Name: {image_name}")
 
         return poses
@@ -158,8 +172,8 @@ def main():
     colmap_path = "/home/rick/Datasets/slam2000-雪乡情-正走/colmap/sparse/0/images.txt"  # 修改为实际路径
     colmap_path2 = "/home/rick/Datasets/slam2000-雪乡情-正走/colmap1/sparse/0/images.txt"
 
-    ColmapPoseVisualizer("colmap", colmap_path)
-    ColmapPoseVisualizer("colmap2", colmap_path2)
+    ColmapPoseVisualizer("colmap", colmap_path, True)
+    # ColmapPoseVisualizer("colmap2", colmap_path2, True)
     rospy.spin()
 
 if __name__ == '__main__':

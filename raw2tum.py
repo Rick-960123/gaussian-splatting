@@ -104,7 +104,7 @@ class PreProcess:
                 camera_pose = self._raw_data_reader._camera.getCameraPose(cur_image.pose)
                 ofs_rgb.write(f"{cur_image.pose.timestamp} rgb/{cur_image.pose.timestamp}.png\n")
                 ofs_pose.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
-                        f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
+                        f"{camera_pose.qX} {camera_pose.qZ} {camera_pose.qY} {camera_pose.qW}\n")
 
                 if len(self._whole_points) > 0: 
                     depth_img = CommonTools.getDepthO3d(camera_pose, self._whole_points, self._raw_data_reader._camera)
@@ -120,10 +120,10 @@ class PreProcess:
             ofs_camera.write(f"{cameraInfo}\n")
 
     def run(self):
-        self.save_lidar_frame()
-        self.save_camera_info()
+        # self.save_lidar_frame()
+        # self.save_camera_info()
         self.save_camera_frame()
-        self.save_whole_points()
+        # self.save_whole_points()
         return True
 
  
@@ -142,5 +142,5 @@ if __name__ == "__main__":
     
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
     
-    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, 40)
+    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, 20)
     pp.run()
