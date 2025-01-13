@@ -1,12 +1,6 @@
 import cv2
 import numpy as np
 import os
-import open3d as o3d
-import laspy
-import torch
-import struct
-import yaml
-from scipy.spatial.transform import Rotation, Slerp
 from rawDataReader import *
 
 class PreProcess:
@@ -104,7 +98,7 @@ class PreProcess:
                 camera_pose = self._raw_data_reader._camera.getCameraPose(cur_image.pose)
                 ofs_rgb.write(f"{cur_image.pose.timestamp} rgb/{cur_image.pose.timestamp}.png\n")
                 ofs_pose.write(f"{camera_pose.timestamp} {camera_pose.posX} {camera_pose.posY} {camera_pose.posZ} "
-                        f"{camera_pose.qX} {camera_pose.qZ} {camera_pose.qY} {camera_pose.qW}\n")
+                        f"{camera_pose.qX} {camera_pose.qY} {camera_pose.qZ} {camera_pose.qW}\n")
 
                 if len(self._whole_points) > 0: 
                     depth_img = CommonTools.getDepthO3d(camera_pose, self._whole_points, self._raw_data_reader._camera)
@@ -120,10 +114,10 @@ class PreProcess:
             ofs_camera.write(f"{cameraInfo}\n")
 
     def run(self):
-        # self.save_lidar_frame()
-        # self.save_camera_info()
+        self.save_lidar_frame()
+        self.save_camera_info()
         self.save_camera_frame()
-        # self.save_whole_points()
+        self.save_whole_points()
         return True
 
  

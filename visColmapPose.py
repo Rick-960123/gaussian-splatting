@@ -67,8 +67,6 @@ class ColmapPoseVisualizer:
             pose_inv[:3, :3] = rotation[:3, :3]
             pose_inv[:3, 3] = np.array([tx, ty, tz]) * self.scale
             
-            
-            
             if first_pose_inv is None:
                 first_pose_inv = pose_inv
                 print(f"First Image Name: {image_name}")
@@ -76,16 +74,6 @@ class ColmapPoseVisualizer:
                 print(pose_inv)
             
             poses[image_id] = first_pose_inv @ np.linalg.inv(pose_inv)
-
-            tmp_T = np.array([1,0,0,0,
-                                0,0,-1,0,
-                                0,1,0,0,
-                                0,0,0,1]).reshape((4,4)) @ np.array([1,0,0,0,
-                                0,0,-1,0,
-                                0,-1,0,0,
-                                0,0,0,1]).reshape((4,4)) 
-            
-            poses[image_id] =  tmp_T @ poses[image_id]
 
             # 跳过下一行（包含特征点信息）
             line_index += 2
@@ -97,10 +85,9 @@ class ColmapPoseVisualizer:
         return poses
 
     def publish_poses(self, poses):
-        x_data, y_data, z_data, imageids = [], [], [], []
-        
-        """发布所有位姿"""
-        for image_id, pose in sorted(poses.items()):
+        x_data, y_data, z_data, qx_data, qy_data, qz_data, qw_data, x_o, y_o, z_o, imageids = [], [], [], [], [], [], [], [], [], [], []
+
+        for timestamp, pose in sorted(poses.items()):
             # 创建PoseStamped消息
             pose_msg = PoseStamped()
             pose_msg.header.frame_id = "map"
@@ -108,15 +95,23 @@ class ColmapPoseVisualizer:
             
             # 获取位置和方向
             position = pose[:3, 3]
-
             quaternion = tf.transformations.quaternion_from_matrix(pose)
+            
+            x_data.append(position[0])
+            y_data.append(position[1])
+            z_data.append(position[2])
+            qx_data.append(quaternion[0])
+            qy_data.append(quaternion[1])
+            qz_data.append(quaternion[2])
+            qw_data.append(quaternion[3])
+            imageids.append(timestamp)
+
             euler_angles = tf.transformations.euler_from_matrix(pose)
             euler_x, euler_y, euler_z = euler_angles
             
-            x_data.append(euler_x * 180/3.14159)
-            y_data.append(euler_y* 180/3.14159)
-            z_data.append(euler_z* 180/3.14159)
-            imageids.append(image_id)
+            x_o.append(euler_x * 180/3.14159)
+            y_o.append(euler_y* 180/3.14159)
+            z_o.append(euler_z* 180/3.14159)
 
             pose_msg.pose.position.x = position[0]
             pose_msg.pose.position.y = position[1]
@@ -137,14 +132,28 @@ class ColmapPoseVisualizer:
 
         if self.plot:
             fig, ax = plt.subplots()
-            ax.plot(imageids, x_data, label="Euler X", color='r')
-            ax.plot(imageids, y_data, label="Euler Y", color='g')
-            ax.plot(imageids, z_data, label="Euler Z", color='b')
-
+            ax.plot(imageids, x_data, label="Position X", color='r')
+            ax.plot(imageids, y_data, label="Position Y", color='g')
+            ax.plot(imageids, z_data, label="Position Z", color='b')
+            fig1, ax1 = plt.subplots()
+            ax1.plot(imageids, qx_data, label="Quaternion X", color='r')
+            ax1.plot(imageids, qy_data, label="Quaternion Y", color='g')
+            ax1.plot(imageids, qz_data, label="Quaternion Z", color='b')
+            ax1.plot(imageids, qw_data, label="Quaternion W", color='y')
+            fig2, ax2 = plt.subplots()
+            ax2.plot(imageids, x_o, label="Euler X", color='r')
+            ax2.plot(imageids, y_o, label="Euler Y", color='g')
+            ax2.plot(imageids, z_o, label="Euler Z", color='b')
             ax.set_xlabel('imageId')
-            ax.set_ylabel('Euler Angles')
-            ax.set_title('XYZ Euler Angles Over Time')
+            ax.set_ylabel('Position')
+            ax1.set_ylabel('Quaternion')
+            ax2.set_ylabel('Euler')
+            ax.set_title('Position Over Time')
+            ax1.set_title('Quaternion Over Time')
+            ax2.set_title('Euler Over Time')
             ax.legend()
+            ax1.legend()
+            ax2.legend()
             plt.show()
 
         while not rospy.is_shutdown():

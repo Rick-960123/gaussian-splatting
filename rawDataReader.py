@@ -39,7 +39,7 @@ class IMUPose:
         self.scallor_acc_y = scallor_acc_y
         self.scallor_acc_z = scallor_acc_z
 
-        self.R_sci = Rotation.from_euler("zyx", np.array([self.roll, self.pitch, self.yaw]))
+        self.R_sci = Rotation.from_euler("xyz", np.array([self.roll, self.pitch, self.yaw]))
         self.R = self.R_sci.as_matrix()
         self.q = self.R_sci.as_quat()
         self.t = np.array([self.px, self.py, self.pz]).transpose()
@@ -79,15 +79,15 @@ class Camera:
             camera_param = config['parameters']["param"]['camera_instrinsic_parameters_opt_cam']
             
             # 转换矩阵
-            T_imu2clrcam = np.array(config['parameters']["param"]['T_imu2optcam_refine']).reshape(4, 4)
+            T_camera2body = np.array(config['parameters']["param"]['T_imu2optcam_refine']).reshape(4, 4)
 
-            # tmp_T = np.array([1,0,0,0,
-            #              0,-1,0,0,
-            #              0,0,-1,0,
-            #              0,0,0,1]).reshape((4,4)) 
-            # T_imu2clrcam = tmp_T @ T_imu2clrcam
+            tmp_T = np.array([1,0,0,0,
+                        0,-1,0,0,
+                        0,0,-1,0,
+                        0,0,0,1]).reshape((4,4)) 
+            T_camera2body = T_camera2body @ tmp_T
     
-            self.T_c2b =  T_imu2clrcam
+            self.T_c2b =  T_camera2body
 
             self.id = 1
             self.model = "PINHOLE"
