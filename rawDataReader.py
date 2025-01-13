@@ -459,20 +459,23 @@ class RawDataReader:
                 return None
             
             ret, frame = self._video_cap.read()
-            if ret and frame is not None:
-                cur_image.img = frame
-                if self._img_idx < len(self._video_time_list):
-                    cur_image.timestamp = self._video_time_list[self._img_idx]
-                    self._img_idx += 1
-                    self._last_video_time = cur_image.timestamp
-                else:
-                    print(f"\nend of video time list {self._last_video_time}\n")
-                    return None
-            else:
+            if not ret or frame is None:
                 print(f"\nend of video {self._last_video_time}\n")
                 return None
-                        
-            if cur_image.timestamp >= first_pose.timestamp and cur_image.timestamp <= latest_pose.timestamp:
+    
+            if self._img_idx >= len(self._video_time_list):
+                print(f"\nend of video time list {self._last_video_time}\n")
+                return None
+
+            cur_image.img = frame
+            cur_image.timestamp = self._video_time_list[self._img_idx]
+            self._last_video_time = cur_image.timestamp
+            self._img_idx += 1
+
+            if cur_image.timestamp > latest_pose.timestamp:
+                return None
+                
+            if cur_image.timestamp >= first_pose.timestamp:
                 break
 
         while self._img_pose_idx < len(self._imu_pose_list):
