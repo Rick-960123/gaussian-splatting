@@ -11,22 +11,21 @@ import matplotlib.pyplot as plt
 import threading
 
 class ColmapPoseVisualizer:
-    def __init__(self, node_name:str, paths:list):
+    def __init__(self, node_name:str, paths:list, scales:list):
         # 创建发布器
-        self.scale = 1.0
         self.publishers = []
         self.poses = []
         for idx, path in enumerate(paths):
             pose_pub = rospy.Publisher(f'/{node_name}_{idx}/camera_poses', PoseStamped, queue_size=10)
             path_pub = rospy.Publisher(f'/{node_name}_{idx}/camera_trajectory', Path, queue_size=10)
             self.publishers.append({pose_pub:pose_pub, path_pub:path_pub})
-            poses = self.read_images_text(path)
+            poses = self.read_images_text(path, scales[idx])
             self.poses.append(poses)
             threading.Thread(target=self.publish_poses, args=(self.poses[idx], self.publishers[idx][pose_pub], self.publishers[idx][path_pub])).start()
 
         self.plot_poses(self.poses)
 
-    def read_images_text(self, path):
+    def read_images_text(self, path, scale):
         """读取COLMAP的images.txt文件"""
         poses = {}
         with open(path, "r") as f:
@@ -55,7 +54,7 @@ class ColmapPoseVisualizer:
             pose_inv = np.eye(4)
             rotation = tf.transformations.quaternion_matrix([qx, qy, qz, qw])
             pose_inv[:3, :3] = rotation[:3, :3]
-            pose_inv[:3, 3] = np.array([tx, ty, tz]) * self.scale
+            pose_inv[:3, 3] = np.array([tx, ty, tz]) * scale
             
             if first_pose_inv is None:
                 first_pose_inv = pose_inv
@@ -187,7 +186,8 @@ class ColmapPoseVisualizer:
 def main():
     rospy.init_node("VisColMapPose", anonymous=True)
     colmap_path = ["/home/rick/Datasets/slam2000-雪乡情-正走/colmap/sparse/0/images.txt", "/home/rick/Datasets/slam2000-雪乡情-正走/colmap1/sparse/0/images.txt"]
-    ColmapPoseVisualizer("colmap", colmap_path)
+    scales = [1.0, 0.738]
+    ColmapPoseVisualizer("colmap", colmap_path, scales)
     rospy.spin()
 
 if __name__ == '__main__':
