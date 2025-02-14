@@ -6,8 +6,8 @@ from rawDataReader import *
 
 
 class PreProcess:
-    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, duration=200):
-        self._raw_data_reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, crop_image=True)
+    def __init__(self, raw_data_reader, save_path, duration=200):
+        self._raw_data_reader = raw_data_reader
         self._duration = duration
         self._whole_points = self._raw_data_reader._las.xyz
 
@@ -115,15 +115,22 @@ class PreProcess:
 if __name__ == "__main__":
 
     base_path = "/home/rick/Datasets/slam2000-雪乡情-正走"
-    save_path = os.path.join(base_path, "colmap")
-
-    imu_pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/IMUPOS.bin")
+    save_path = os.path.join(base_path)
+    
     pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.bin")
     las_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.las")
+    lidar_parms = LidarParams(pose_path, las_path)
 
+    imu_pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/IMUPOS.bin")
     video_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265")
     video_timestamp_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts")
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
+    video_parms = VideoParams(video_path, video_timestamp_path, yaml_path, imu_pose_path)
+
+    imu_path = os.path.join(base_path, "SLAM_PRJ_001/20241105-144253_Imu_Data.bin")
+    imu_parms = ImuParams(imu_path)
+
+    reader = RawDataReader(lidar_parms, video_parms, None)
     
-    pp = PreProcess(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, save_path, 20)
+    pp = PreProcess(reader, save_path, 20)
     pp.run()

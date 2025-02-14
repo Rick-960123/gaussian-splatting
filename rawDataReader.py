@@ -8,9 +8,32 @@ import struct
 import yaml
 from scipy.spatial.transform import Rotation, Slerp
 
+class Pose:
+    format = '<I d d d d f f f f'  # Struct format string
+    struct_size = struct.calcsize(format)
+    def __init__(self, id, timestamp, posX, posY, posZ, qX, qY, qZ, qW):
+        self.id = id
+        self.timestamp = timestamp
+        self.posX = posX
+        self.posY = posY
+        self.posZ = posZ
+        self.qX = qX
+        self.qY = qY
+        self.qZ = qZ
+        self.qW = qW
+        self.R_sci = Rotation.from_quat(np.array([self.qX, self.qY, self.qZ, self.qW]))
+        self.R = self.R_sci.as_matrix()
+        self.q = self.R_sci.as_quat()
+        self.t = np.array([self.posX, self.posY, self.posZ]).transpose()
+        pose_T = np.eye(4)
+        pose_T[:3,:3] = self.R
+        pose_T[:3,3] = self.t
+        self.T = pose_T
+        self.T_inv = np.linalg.inv(self.T)
+
 class IMUPose:
-    tdpose_format = '<d d d d d d d d d d d d d d d d d d d d d d'  # Struct format string
-    struct_size = struct.calcsize(tdpose_format)
+    format = '<d d d d d d d d d d d d d d d d d d d d d d'  # Struct format string
+    struct_size = struct.calcsize(format)
     def __init__(self, timestamp, yaw, pitch, roll, vx, vy, vz, px, py, pz,
                  gyro_x_drift, gyro_y_drift, gyro_z_drift,
                  acc_x_drift, acc_y_drift, acc_z_drift,
@@ -43,29 +66,6 @@ class IMUPose:
         self.R = self.R_sci.as_matrix()
         self.q = self.R_sci.as_quat()
         self.t = np.array([self.px, self.py, self.pz]).transpose()
-        pose_T = np.eye(4)
-        pose_T[:3,:3] = self.R
-        pose_T[:3,3] = self.t
-        self.T = pose_T
-        self.T_inv = np.linalg.inv(self.T)
-
-class Pose:
-    tdpose_format = '<I d d d d f f f f'  # Struct format string
-    struct_size = struct.calcsize(tdpose_format)
-    def __init__(self, id, timestamp, posX, posY, posZ, qX, qY, qZ, qW):
-        self.id = id
-        self.timestamp = timestamp
-        self.posX = posX
-        self.posY = posY
-        self.posZ = posZ
-        self.qX = qX
-        self.qY = qY
-        self.qZ = qZ
-        self.qW = qW
-        self.R_sci = Rotation.from_quat(np.array([self.qX, self.qY, self.qZ, self.qW]))
-        self.R = self.R_sci.as_matrix()
-        self.q = self.R_sci.as_quat()
-        self.t = np.array([self.posX, self.posY, self.posZ]).transpose()
         pose_T = np.eye(4)
         pose_T[:3,:3] = self.R
         pose_T[:3,3] = self.t
@@ -231,12 +231,6 @@ class Camera:
                 self.cx,
                 self.cy]
     
-class Imu:
-    def __init__(self, id, bias, sigma):
-        self.id = id
-        self.bias = bias
-        self.sigma = sigma
-    
 class ImageFrame:
     def __init__(self, timestamp=0.0, img=None, pose=None):
         self.timestamp = timestamp
@@ -248,10 +242,13 @@ class LidarFrame:
         self.timestamp = timestamp
         self.points = points
         self.pose = pose
+        
+    def getBodyPoints(self):
+        return CommonTools.getPointsInBody(self.points, self.pose)
 
 class ImuFrame:
-    tdpose_format = '<d f f f f f f f f f f'  # Struct format string
-    struct_size = struct.calcsize(tdpose_format)
+    format = '<d f f f f f f f f f f'  # Struct format string
+    struct_size = struct.calcsize(format)
     def __init__(self, timestamp, Accel_x, Accel_y, Accel_z, Gyro_x, Gyro_y, Gyro_z, Q0, Q1, Q2, Q3):
         self.timestamp = timestamp
         self.Accel_x = Accel_x
@@ -295,6 +292,8 @@ class CommonTools:
 
     @classmethod
     def getPointsInBody(self, points, cur_pose):
+        if points is None or points.shape[0] == 0:
+            return points
         points = np.array(points).transpose()
         r = cur_pose.R.transpose()
         t = cur_pose.T_inv[:3:,3].reshape((3,1))
@@ -372,24 +371,67 @@ class CommonTools:
         pcd = o3d.io.read_point_cloud(path)
         return pcd.points
 
+class LidarParams:
+    def __init__(self, pose_path, las_path):
+        self.pose_path = pose_path
+        self.las_path = las_path
+
+class VideoParams:
+    def __init__(self, video_path, video_timestamp_path, yaml_path, imu_pose_path, crop_image=False):
+        self.video_path = video_path
+        self.video_timestamp_path = video_timestamp_path
+        self.yaml_path = yaml_path
+        self.imu_pose_path = imu_pose_path
+        self.crop_image = crop_image
+
+class ImuParams:
+    def __init__(self, imu_path):
+        self.imu_path = imu_path
+
 class RawDataReader:
-    def __init__(self, pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path, crop_image=False):
-        self._point_idx = 0
-        self._img_idx = 0
-        self._pose_idx = 0
-        self._imu_pose_idx = 0
-        self._img_pose_idx = 0
-        self._imu_frame_idx = 0
-        self._last_video_time = 0
+    def __init__(self, lidar_parms=None, video_parms=None, imu_parms=None):
+        self.lidar_parms = lidar_parms
+        self.video_parms = video_parms
+        self.imu_parms = imu_parms
 
-        self._common_tools = CommonTools()
-        self._camera = Camera(yaml_path, crop_image)
-        self._video_cap = cv2.VideoCapture(video_path)
+        self.point_idx = 0
+        self.img_idx = 0
+        self.imu_idx = 0
+        self.pose_idx = 0
+        self.imu_pose_idx = 0
+        self.img_pose_idx = 0
+        self.last_video_time = 0
 
-        self._las = self.readLas(las_path)
-        self._video_time_list = self.readVideoTime(video_timestamp_path)
-        self._pose_list = self.readPose(pose_path)
-        self._imu_pose_list = self.readImuPose(imu_pose_path)
+        self.common_tools = CommonTools()
+
+        self.video_cycle = 0
+        self.lidar_cycle = 0
+        self.imu_cycle = 0
+        self.first_video_stamp = float('inf')
+        self.first_pose_stamp = float('inf')
+        self.first_imu_stamp = float('inf')
+
+        if self.video_parms:
+            self.imu_pose_list, _ = self.readImuPose(self.video_parms.imu_pose_path)
+            self.camera = Camera(self.video_parms.yaml_path, self.video_parms.crop_image)
+            self.video_cap = cv2.VideoCapture(self.video_parms.video_path)
+            self.video_time_list = self.readVideoTime(self.video_parms.video_timestamp_path)
+            self.first_video_stamp = self.imu_pose_list[0].timestamp
+            self.video_cycle = self.imu_pose_list[1].timestamp - self.first_video_stamp
+
+        if self.lidar_parms:
+            self.las = self.readLas(self.lidar_parms.las_path)
+            self.pose_list = self.readPose(self.lidar_parms.pose_path)
+            self.first_pose_stamp = self.pose_list[0].timestamp
+            self.lidar_cycle = self.pose_list[1].timestamp - self.first_pose_stamp
+
+        if self.imu_parms:
+            self.imu_list = self.readImu(self.imu_parms.imu_path)
+            self.first_imu_stamp = self.imu_list[0].timestamp
+            self.imu_cycle = self.imu_list[1].timestamp - self.first_imu_stamp
+
+        self.first_stamp = min(self.first_imu_stamp, self.first_video_stamp, self.first_pose_stamp)
+        self.data_cycle = max(self.imu_cycle, self.video_cycle, self.lidar_cycle)
 
     def readLas(self, path):
         las = laspy.read(path)
@@ -402,75 +444,106 @@ class RawDataReader:
                 data = pose_file.read(Pose.struct_size)
                 if not data:
                     break
-                pose_data = struct.unpack(Pose.tdpose_format, data)
+                pose_data = struct.unpack(Pose.format, data)
                 pose = Pose(*pose_data)
                 pose_list.append(pose)
         return pose_list
     
+    def readImu(self, path):
+        imu_list = []
+        with open(path, 'rb') as imu_file:
+            while True:
+                data = imu_file.read(ImuFrame.struct_size)
+                if not data:
+                    break
+                pose_data = struct.unpack(ImuFrame.format, data)
+                imu_frame = ImuFrame(*pose_data)
+                imu_list.append(imu_frame)
+        return imu_list
+    
     def readImuPose(self, path):
         imu_pose_list = []
+        imu_list = []
         with open(path, 'rb') as imu_pose_file:
             while True:
                 data = imu_pose_file.read(IMUPose.struct_size)
                 if not data:
                     break
 
-                pose_data = struct.unpack(IMUPose.tdpose_format, data)
+                pose_data = struct.unpack(IMUPose.format, data)
                 imu_pose = IMUPose(*pose_data)
-                pose = Pose(self._imu_pose_idx, imu_pose.timestamp, *(imu_pose.t), *(imu_pose.q))
-                self._imu_pose_idx += 1
+                pose = Pose(self.imu_pose_idx, imu_pose.timestamp, *(imu_pose.t), *(imu_pose.q))
+                self.imu_pose_idx += 1
                 if pose is None:
                     break
                 imu_pose_list.append(pose)
-        return imu_pose_list
+                imu_list.append(imu_pose)
+
+        return imu_pose_list, imu_list
 
     def readVideoTime(self, path):
         video_time_list = []
         with open(path, 'r') as f:
             for line in f:
                 #UTC时间 转换为 GPS时间
-                video_time_list.append(float(line.strip()) + self._camera.utc_gps_time_diff)
+                video_time_list.append(float(line.strip()) + self.camera.utc_gps_time_diff)
         return video_time_list
+    
+    def imuNext(self):
+        if not self.imu_parms:
+            return None
+        
+        if self.imu_idx >= len(self.imu_list):
+            return None
+        imu_frame = self.imu_list[self.imu_idx]
+        self.imu_idx += 1
+        return imu_frame
 
     def lidarNext(self):
-        if self._pose_idx >= len(self._pose_list):
+        if not self.lidar_parms:
+            return None
+        
+        if self.pose_idx >= len(self.pose_list):
             return None
         
         points = []
-        pose = self._pose_list[self._pose_idx]
-        self._pose_idx += 1
+        pose = self.pose_list[self.pose_idx]
+        self.pose_idx += 1
         lidar_frame = LidarFrame(pose.timestamp, points, pose)
-        while self._point_idx < self._las.header.point_count:
-            if self._las.gps_time[self._point_idx] < pose.timestamp:
-                points.append([self._las.x[self._point_idx], self._las.y[self._point_idx], self._las.z[self._point_idx]])
-                self._point_idx += 1
+        while self.point_idx < self.las.header.point_count:
+            if self.las.gps_time[self.point_idx] < pose.timestamp:
+                points.append([self.las.x[self.point_idx], self.las.y[self.point_idx], self.las.z[self.point_idx]])
+                self.point_idx += 1
             else:
                 break
         lidar_frame.points = np.array(points)
         return lidar_frame
 
     def imgNext(self):
+        if not self.video_parms:
+            return None
+        
         cur_image = ImageFrame()
-        first_pose = self._imu_pose_list[0]
-        latest_pose = self._imu_pose_list[-1]
+        first_pose = self.imu_pose_list[0]
+        latest_pose = self.imu_pose_list[-1]
 
         while True:
-            if not self._video_cap.isOpened():
+            if not self.video_cap.isOpened():
                 return None
             
-            ret, frame = self._video_cap.read()
+            ret, frame = self.video_cap.read()
             if not ret or frame is None:
-                print(f"\nend of video {self._last_video_time}\n")
+                print(f"\nend of video {self.last_video_time}\n")
                 return None
     
-            if self._img_idx >= len(self._video_time_list):
-                print(f"\nend of video time list {self._last_video_time}\n")
+            if self.img_idx >= len(self.video_time_list):
+                print(f"\nend of video time list {self.last_video_time}\n")
                 return None
 
             cur_image.img = frame
-            cur_image.timestamp = self._video_time_list[self._img_idx]
-            self._last_video_time = cur_image.timestamp
-            self._img_idx += 1
+            cur_image.timestamp = self.video_time_list[self.img_idx]
+            self.last_video_time = cur_image.timestamp
+            self.img_idx += 1
 
             if cur_image.timestamp > latest_pose.timestamp:
                 return None
@@ -478,18 +551,23 @@ class RawDataReader:
             if cur_image.timestamp >= first_pose.timestamp:
                 break
 
-        while self._img_pose_idx < len(self._imu_pose_list):
-            before_pose = self._imu_pose_list[self._img_pose_idx]
-            after_pose = self._imu_pose_list[self._img_pose_idx + 1]
-            self._img_pose_idx += 1
+        while self.img_pose_idx < len(self.imu_pose_list):
+            before_pose = self.imu_pose_list[self.img_pose_idx]
+            after_pose = self.imu_pose_list[self.img_pose_idx + 1]
+            self.img_pose_idx += 1
             if before_pose.timestamp <= cur_image.timestamp and cur_image.timestamp <= after_pose.timestamp:
-                cur_image.pose = self._common_tools.insertPose(cur_image.timestamp, before_pose, after_pose)
+                cur_image.pose = self.common_tools.insertPose(cur_image.timestamp, before_pose, after_pose)
                 break
         
-        cur_image.img = self._camera.calibrateImage(cur_image.img)
+        cur_image.img = self.camera.calibrateImage(cur_image.img)
         return cur_image
     
     def test(self):
+        while True:
+            imu_data = self.imuNext()
+            if imu_data is None:
+                break
+            print(imu_data.timestamp)
         while True:
             img_data = self.imgNext()
             if img_data is None:
@@ -502,18 +580,21 @@ class RawDataReader:
             print(lidar_data.timestamp)
     
 if __name__ == "__main__":
-
     base_path = "/home/rick/Datasets/slam2000-雪乡情-正走"
     save_path = os.path.join(base_path)
-
     
     pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.bin")
     las_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.las")
-    imu_pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/IMUPOS.bin")
+    lidar_parms = LidarParams(pose_path, las_path)
 
+    imu_pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/IMUPOS.bin")
     video_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265")
     video_timestamp_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts")
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
-    
-    reader = RawDataReader(pose_path, las_path, imu_pose_path, video_path, video_timestamp_path, yaml_path)
+    video_parms = VideoParams(video_path, video_timestamp_path, yaml_path, imu_pose_path)
+
+    imu_path = os.path.join(base_path, "SLAM_PRJ_001/20241105-144253_Imu_Data.bin")
+    imu_parms = ImuParams(imu_path)
+
+    reader = RawDataReader(lidar_parms, video_parms, imu_parms)
     reader.test()
