@@ -73,7 +73,7 @@ class IMUPose:
         self.T_inv = np.linalg.inv(self.T)
 
 class Camera:
-    def __init__(self, yaml_path, crop_image=False):
+    def __init__(self, yaml_path, undistort_image=False, crop_image=False):
         with open(yaml_path, 'r') as file:
             config = yaml.safe_load(file)
             camera_param = config['parameters']["param"]['camera_instrinsic_parameters_opt_cam']
@@ -99,8 +99,9 @@ class Camera:
             self.fy_d = camera_param[5]
             self.distortion = camera_param[6:]
 
+        self.undistort_image = undistort_image
         self._crop_image = crop_image
-        if self._crop_image:
+        if self.undistort_image and self._crop_image:
             self._crop_right = 150
             self._crop_left = 0
             self._crop_top = 150
@@ -120,7 +121,9 @@ class Camera:
         self.fy = self.fy_d
 
         self.utc_gps_time_diff = 18.0
-        self.initUndistortMap()
+
+        if self.undistort_image:
+            self.initUndistortMap()
 
     def getCameraPose(self, cur_pose):
         camera_pose_in_world = cur_pose.T @ self.T_c2b
@@ -377,11 +380,12 @@ class LidarParams:
         self.las_path = las_path
 
 class VideoParams:
-    def __init__(self, video_path, video_timestamp_path, yaml_path, imu_pose_path, crop_image=False):
+    def __init__(self, video_path, video_timestamp_path, yaml_path, imu_pose_path, undistort_image=False, crop_image=False):
         self.video_path = video_path
         self.video_timestamp_path = video_timestamp_path
         self.yaml_path = yaml_path
         self.imu_pose_path = imu_pose_path
+        self.undistort_image =  undistort_image
         self.crop_image = crop_image
 
 class ImuParams:
@@ -413,7 +417,7 @@ class RawDataReader:
 
         if self.video_parms:
             self.imu_pose_list, _ = self.readImuPose(self.video_parms.imu_pose_path)
-            self.camera = Camera(self.video_parms.yaml_path, self.video_parms.crop_image)
+            self.camera = Camera(self.video_parms.yaml_path, self.video_parms.undistort_image, self.video_parms.crop_image)
             self.video_cap = cv2.VideoCapture(self.video_parms.video_path)
             self.video_time_list = self.readVideoTime(self.video_parms.video_timestamp_path)
             self.first_video_stamp = self.imu_pose_list[0].timestamp
@@ -559,7 +563,8 @@ class RawDataReader:
                 cur_image.pose = self.common_tools.insertPose(cur_image.timestamp, before_pose, after_pose)
                 break
         
-        cur_image.img = self.camera.calibrateImage(cur_image.img)
+        if self.camera.undistort_image:
+            cur_image.img = self.camera.calibrateImage(cur_image.img)
         return cur_image
     
     def test(self):
