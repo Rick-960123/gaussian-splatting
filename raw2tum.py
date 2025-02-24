@@ -124,7 +124,7 @@ class PreProcess:
 if __name__ == "__main__":
 
     base_path = "/home/rick/Datasets/slam2000-雪乡情-正走"
-    save_path = os.path.join(base_path)
+    save_path = os.path.join(base_path, "tum")
     
     pose_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.bin")
     las_path = os.path.join(base_path, "V5-2024-11-05_15-28-23_808/optimised_2024-11-05_15-30-42_602.las")
