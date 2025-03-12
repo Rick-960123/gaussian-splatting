@@ -15,9 +15,12 @@ class PreProcess:
         self._sparse_dir = os.path.join(self._colmap_dir, "sparse/0")
         self._images_dir = os.path.join(self._colmap_dir, "images")
         self._masks_dir = os.path.join(self._colmap_dir, "masks")
+        self._depths_dir = os.path.join(self._colmap_dir, "depths")
+
         os.makedirs(self._sparse_dir, exist_ok=True)
         os.makedirs(self._images_dir, exist_ok=True)
         os.makedirs(self._masks_dir, exist_ok=True)
+        os.makedirs(self._depths_dir, exist_ok=True)
 
         # 定义COLMAP文件路径
         self._colmap_cameras = os.path.join(self._sparse_dir, "cameras.txt")
@@ -90,6 +93,9 @@ class PreProcess:
                 cv2.imwrite(os.path.join(self._images_dir, image_name), cur_image.img)
                 cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
+                depth_image = CommonTools.getDepthImage(cur_image.pose, self._raw_data_reader._las.xyz, self._raw_data_reader._camera)
+                cv2.imwrite(os.path.join(self._depths_dir, image_name), depth_image)
+
                 camera_pose = self._raw_data_reader._camera.getCameraPose(cur_image.pose)
 
                 camera_extrinsic_quat = Rotation.from_matrix(camera_pose.T_inv[:3,:3]).as_quat()
@@ -109,6 +115,7 @@ class PreProcess:
         self.save_camera_frame()
         self.save_camera_info()
         self.save_whole_points()
+        self.save_depth_image()
         return True
 
 
