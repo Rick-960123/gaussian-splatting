@@ -6,17 +6,17 @@ from rawDataReader import *
 
 
 class PreProcess:
-    def __init__(self, raw_data_reader, save_path, duration=200):
+    def __init__(self, raw_data_reader, save_path, save_depth=True, duration=200):
         self._raw_data_reader = raw_data_reader
         self._duration = duration
-        self._whole_points = self._raw_data_reader._las.xyz
+        self._whole_points = self._raw_data_reader.las.xyz
 
         self._colmap_dir = save_path
         self._sparse_dir = os.path.join(self._colmap_dir, "sparse/0")
         self._images_dir = os.path.join(self._colmap_dir, "images")
         self._masks_dir = os.path.join(self._colmap_dir, "masks")
         self._depths_dir = os.path.join(self._colmap_dir, "depths")
-
+        
         os.makedirs(self._sparse_dir, exist_ok=True)
         os.makedirs(self._images_dir, exist_ok=True)
         os.makedirs(self._masks_dir, exist_ok=True)
@@ -28,11 +28,14 @@ class PreProcess:
         self._colmap_points3D = os.path.join(self._sparse_dir, "points3D.txt")
         self._colmap_points3D_density = os.path.join(self._sparse_dir, "points3D_density.ply")
 
-        self.mask = np.ones((self._raw_data_reader._camera.height, self._raw_data_reader._camera.width), dtype=np.uint8) * 255
-        self.mask[:, -150:] = 0
-        self.mask[:150, :] = 0
-   
-    
+        if not self._raw_data_reader.camera.crop_image:
+            self.mask = np.ones((self._raw_data_reader.camera.height, self._raw_data_reader.camera.width), dtype=np.uint8) * 255
+            self.mask[:, -150:] = 0
+            self.mask[:150, :] = 0
+        else:
+            self.mask = None
+
+        self.save_depth = save_depth
     def save_whole_points(self):
         CommonTools.savePointCloudToPly(self._colmap_points3D_density, self._whole_points)
         points = CommonTools.filterPointCloud(self._whole_points)
@@ -56,14 +59,14 @@ class PreProcess:
             
             # PINHOLE相机模型
             params = [
-                self._raw_data_reader._camera.fx, 
-                self._raw_data_reader._camera.fy,
-                self._raw_data_reader._camera.cx, 
-                self._raw_data_reader._camera.cy
+                self._raw_data_reader.camera.fx, 
+                self._raw_data_reader.camera.fy,
+                self._raw_data_reader.camera.cx, 
+                self._raw_data_reader.camera.cy
             ]
             
             # 写入相机参数
-            fid.write(f"1 PINHOLE {self._raw_data_reader._camera.width} {self._raw_data_reader._camera.height} "
+            fid.write(f"1 PINHOLE {self._raw_data_reader.camera.width} {self._raw_data_reader.camera.height} "
                      f"{params[0]} {params[1]} {params[2]} {params[3]}\n")
 
     def save_camera_frame(self):
@@ -91,12 +94,15 @@ class PreProcess:
                 # 保存图像
                 image_name = f"{cur_image.timestamp}.png"
                 cv2.imwrite(os.path.join(self._images_dir, image_name), cur_image.img)
-                cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
-                depth_image = CommonTools.getDepthImage(cur_image.pose, self._raw_data_reader._las.xyz, self._raw_data_reader._camera)
-                cv2.imwrite(os.path.join(self._depths_dir, image_name), depth_image)
+                if self.mask is not None:
+                    cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
-                camera_pose = self._raw_data_reader._camera.getCameraPose(cur_image.pose)
+                if self.save_depth:
+                    depth_image = CommonTools.getDepthImage(cur_image.pose, self._raw_data_reader._las.xyz, self._raw_data_reader._camera)
+                    cv2.imwrite(os.path.join(self._depths_dir, image_name), depth_image)
+
+                camera_pose = self._raw_data_reader.camera.getCameraPose(cur_image.pose)
 
                 camera_extrinsic_quat = Rotation.from_matrix(camera_pose.T_inv[:3,:3]).as_quat()
                 camera_extrinsic_t = camera_pose.T_inv[:3,3]
@@ -115,7 +121,6 @@ class PreProcess:
         self.save_camera_frame()
         self.save_camera_info()
         self.save_whole_points()
-        self.save_depth_image()
         return True
 
 
@@ -132,7 +137,7 @@ if __name__ == "__main__":
     video_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.h265")
     video_timestamp_path = os.path.join(base_path, "SLAM_PRJ_001/OPTICAL_CAM/optcam_1.ts")
     yaml_path = os.path.join(base_path, "SLAM_PRJ_001/slam_calib.yaml")
-    video_parms = VideoParams(video_path, video_timestamp_path, yaml_path, imu_pose_path)
+    video_parms = VideoParams(video_path, video_timestamp_path, yaml_path, imu_pose_path, True, True)
 
     imu_path = os.path.join(base_path, "SLAM_PRJ_001/20241105-144253_Imu_Data.bin")
     imu_parms = ImuParams(imu_path)
