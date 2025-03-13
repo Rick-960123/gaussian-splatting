@@ -28,7 +28,7 @@ class PreProcess:
         self._colmap_points3D = os.path.join(self._sparse_dir, "points3D.txt")
         self._colmap_points3D_density = os.path.join(self._sparse_dir, "points3D_density.ply")
 
-        if not self._raw_data_reader.camera.crop_image:
+        if not self._raw_data_reader.video_parms.crop_image:
             self.mask = np.ones((self._raw_data_reader.camera.height, self._raw_data_reader.camera.width), dtype=np.uint8) * 255
             self.mask[:, -150:] = 0
             self.mask[:150, :] = 0
@@ -98,11 +98,11 @@ class PreProcess:
                 if self.mask is not None:
                     cv2.imwrite(os.path.join(self._masks_dir, image_name), self.mask)
 
-                if self.save_depth:
-                    depth_image = CommonTools.getDepthImage(cur_image.pose, self._raw_data_reader._las.xyz, self._raw_data_reader._camera)
-                    cv2.imwrite(os.path.join(self._depths_dir, image_name), depth_image)
-
                 camera_pose = self._raw_data_reader.camera.getCameraPose(cur_image.pose)
+
+                if self.save_depth:
+                    depth_image = CommonTools.getDepthO3d(camera_pose, self._whole_points, self._raw_data_reader.camera)
+                    cv2.imwrite(os.path.join(self._depths_dir, image_name), depth_image)
 
                 camera_extrinsic_quat = Rotation.from_matrix(camera_pose.T_inv[:3,:3]).as_quat()
                 camera_extrinsic_t = camera_pose.T_inv[:3,3]

@@ -116,9 +116,11 @@ class Camera:
         self.width = self.width_d - self._crop_left - self._crop_right
         self.cx = self.width_d / 2 - self._crop_left
         self.cy = self.height_d / 2 - self._crop_top
-
         self.fx = self.fx_d
         self.fy = self.fy_d
+        self.K = np.array([[self.fx, 0, self.cx],
+                           [0, self.fy, self.cy],
+                           [0, 0, 1]])
 
         self.utc_gps_time_diff = 18.0
 
@@ -323,7 +325,7 @@ class CommonTools:
         extrinsic = torch.tensor(camera_pose.T_inv, dtype=torch.float32)  # shape (4, 4)
         points_camera = points_homogeneous @ extrinsic.T  # shape (N, 4)
         
-        intrinsic = torch.tensor(camera.matrix, dtype=torch.float32)  # shape (3, 3)
+        intrinsic = torch.tensor(camera.K, dtype=torch.float32)  # shape (3, 3)
         
         points_camera = points_camera[:, :3]
         points_image = points_camera @ intrinsic.T  # shape (N, 3)
@@ -358,7 +360,11 @@ class CommonTools:
                                     [0, 0, 1]], dtype=o3d.core.Dtype.Float32)
 
         extrinsic = o3d.core.Tensor(np.array(camera_pose.T_inv, dtype=np.float32))
-        depth_image = pcd.project_to_depth_image(width=camera.width, 
+        diameter = np.linalg.norm(
+        np.asarray(pcd.get_max_bound()) - np.asarray(pcd.get_min_bound()))
+        _, pt_map = pcd.hidden_point_removal(camera_pose.T[:3,3], diameter * 2)
+        new_pcd = pcd.select_by_index(pt_map)
+        depth_image = new_pcd.project_to_depth_image(width=camera.width, 
                                                 height=camera.height, 
                                                 intrinsics=intrinsic,
                                                 extrinsics=extrinsic,
