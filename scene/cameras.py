@@ -162,13 +162,6 @@ class Camera(nn.Module):
         self.cam_trans_delta = nn.Parameter(
             torch.zeros(3, requires_grad=True, device="cuda:0")
         )
-
-        self.exposure_a = nn.Parameter(
-            torch.tensor([0.0], requires_grad=True, device="cuda:0")
-        )
-        self.exposure_b = nn.Parameter(
-            torch.tensor([0.0], requires_grad=True, device="cuda:0")
-        )
     
     @property
     def world_view_transform(self):
