@@ -14,6 +14,8 @@ import numpy as np
 from utils.graphics_utils import fov2focal
 from PIL import Image
 import cv2
+import os
+import scipy.spatial.transform
 
 WARNED = False
 
@@ -76,7 +78,8 @@ def cameraList_from_camInfos(cam_infos, resolution_scale, args, is_nerf_syntheti
 
 def camera_to_JSON(id, camera : Camera):
     Rt = np.zeros((4, 4))
-    Rt[:3, :3] = camera.R.transpose()
+    # Rt[:3, :3] = camera.R.transpose()
+    Rt[:3, :3] = camera.R
     Rt[:3, 3] = camera.T
     Rt[3, 3] = 1.0
 
@@ -95,3 +98,15 @@ def camera_to_JSON(id, camera : Camera):
         'fx' : fov2focal(camera.FovX, camera.width)
     }
     return camera_entry
+
+def camera_to_colmap(save_path : str, cameras : list[Camera]):
+    sorted_cameras = sorted(cameras, key=lambda x: float(x.image_name.split("_")[1].rsplit(".", 1)[0]))
+    with open(os.path.join(save_path, "imagePoses.txt"), 'w') as fid:
+        for id, camera in enumerate(sorted_cameras):   
+            q = scipy.spatial.transform.Rotation.from_matrix(camera.R).as_quat()
+            t = camera.T
+            fid.write(f"{id} {q[3]} {q[0]} {q[1]} {q[2]} "
+                         f"{t[0]} {t[1]} {t[2]} 2 {camera.image_name}\n")
+
+            fid.write("\n")
+    return

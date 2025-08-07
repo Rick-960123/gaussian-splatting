@@ -16,6 +16,74 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 from utils.general_utils import PILtoTorch
 import cv2
 
+def rt2mat(R, T):
+    mat = np.eye(4)
+    mat[0:3, 0:3] = R
+    mat[0:3, 3] = T
+    return mat
+
+
+def skew_sym_mat(x):
+    device = x.device
+    dtype = x.dtype
+    ssm = torch.zeros(3, 3, device=device, dtype=dtype)
+    ssm[0, 1] = -x[2]
+    ssm[0, 2] = x[1]
+    ssm[1, 0] = x[2]
+    ssm[1, 2] = -x[0]
+    ssm[2, 0] = -x[1]
+    ssm[2, 1] = x[0]
+    return ssm
+
+def SO3_exp(theta):
+    device = theta.device
+    dtype = theta.dtype
+
+    W = skew_sym_mat(theta)
+    W2 = W @ W
+    angle = torch.norm(theta)
+    I = torch.eye(3, device=device, dtype=dtype)
+    if angle < 1e-5:
+        return I + W + 0.5 * W2
+    else:
+        return (
+            I
+            + (torch.sin(angle) / angle) * W
+            + ((1 - torch.cos(angle)) / (angle**2)) * W2
+        )
+
+
+def V(theta):
+    dtype = theta.dtype
+    device = theta.device
+    I = torch.eye(3, device=device, dtype=dtype)
+    W = skew_sym_mat(theta)
+    W2 = W @ W
+    angle = torch.norm(theta)
+    if angle < 1e-5:
+        V = I + 0.5 * W + (1.0 / 6.0) * W2
+    else:
+        V = (
+            I
+            + W * ((1.0 - torch.cos(angle)) / (angle**2))
+            + W2 * ((angle - torch.sin(angle)) / (angle**3))
+        )
+    return V
+
+def SE3_exp(tau):
+    dtype = tau.dtype
+    device = tau.device
+
+    rho = tau[:3]
+    theta = tau[3:]
+    R = SO3_exp(theta)
+    t = V(theta) @ rho
+
+    T = torch.eye(4, device=device, dtype=dtype)
+    T[:3, :3] = R
+    T[:3, 3] = t
+    return T
+
 class Camera(nn.Module):
     def __init__(self, resolution, colmap_id, R, T, FoVx, FoVy, depth_params, image, invdepthmap,
                  image_name, uid,
@@ -26,7 +94,7 @@ class Camera(nn.Module):
 
         self.uid = uid
         self.colmap_id = colmap_id
-        self.R = R
+        self.R = R.transpose()
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
@@ -83,10 +151,63 @@ class Camera(nn.Module):
         self.trans = trans
         self.scale = scale
 
-        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        # self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
-        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
-        self.camera_center = self.world_view_transform.inverse()[3, :3]
+        # self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        # self.camera_center = self.world_view_transform.inverse()[3, :3]
+
+        self.cam_rot_delta = nn.Parameter(
+            torch.zeros(3, requires_grad=True, device="cuda:0")
+        )
+        self.cam_trans_delta = nn.Parameter(
+            torch.zeros(3, requires_grad=True, device="cuda:0")
+        )
+
+        self.exposure_a = nn.Parameter(
+            torch.tensor([0.0], requires_grad=True, device="cuda:0")
+        )
+        self.exposure_b = nn.Parameter(
+            torch.tensor([0.0], requires_grad=True, device="cuda:0")
+        )
+    
+    @property
+    def world_view_transform(self):
+        return torch.tensor(getWorld2View2(self.R, self.T, self.trans, self.scale)).transpose(0, 1).cuda()
+
+    @property
+    def full_proj_transform(self):
+        return (
+            self.world_view_transform.unsqueeze(0).bmm(
+                self.projection_matrix.unsqueeze(0)
+            )
+        ).squeeze(0)
+
+    @property
+    def camera_center(self):
+        return self.world_view_transform.inverse()[3, :3]
+
+    def update_RT(self, R, t):
+        self.R = R.to(device=self.data_device).detach().numpy()
+        self.T = t.to(device=self.data_device).detach().numpy()
+    
+    def update_pose(self, converged_threshold=1e-4):
+        tau = torch.cat([self.cam_trans_delta, self.cam_rot_delta], axis=0)
+
+        T_w2c = torch.eye(4, device=tau.device)
+        T_w2c[0:3, 0:3] = torch.tensor(self.R, device=tau.device, dtype=tau.dtype)
+        T_w2c[0:3, 3] = torch.tensor(self.T, device=tau.device, dtype=tau.dtype)
+
+        new_w2c = SE3_exp(tau) @ T_w2c
+
+        new_R = new_w2c[0:3, 0:3]
+        new_T = new_w2c[0:3, 3]
+
+        converged = tau.norm() < converged_threshold
+        self.update_RT(new_R, new_T)
+
+        self.cam_rot_delta.data.fill_(0)
+        self.cam_trans_delta.data.fill_(0)
+        return converged
         
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):

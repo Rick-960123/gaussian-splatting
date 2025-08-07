@@ -17,11 +17,15 @@ from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state, get_expon_lr_func
+from utils.camera_utils import camera_to_colmap
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import cv2
+import numpy as np
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -39,6 +43,7 @@ try:
     SPARSE_ADAM_AVAILABLE = True
 except:
     SPARSE_ADAM_AVAILABLE = False
+
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
 
@@ -67,10 +72,39 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
+    last_save_name = None
+
+    data_map = { "gs": [], "pose": [] }
+    opt_params = []
+    for i in range(len(viewpoint_stack)):
+        viewpoint_cam = viewpoint_stack[i]
+
+        if i % 2 == 0:
+            data_map["gs"].append(viewpoint_cam.uid)
+        else:
+            data_map["pose"].append(viewpoint_cam.uid)
+
+        opt_params.append(
+            {
+                "params": [viewpoint_cam.cam_rot_delta],
+                "lr": 0.0001,
+                "name": "rot_{}".format(viewpoint_cam.uid),
+            }
+        )
+        opt_params.append(
+            {
+                "params": [viewpoint_cam.cam_trans_delta],
+                "lr": 0.0001,
+                "name": "trans_{}".format(viewpoint_cam.uid),
+            }
+        )
+    pose_optimizer = torch.optim.Adam(opt_params, lr=0.001)
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     for iteration in range(first_iter, opt.iterations + 1):
+        pose_optimizer.zero_grad(set_to_none = True)
+
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -78,7 +112,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 net_image_bytes = None
                 custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
                 if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
+                    # net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)["render"]
+                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier=scaling_modifer)["render"]
                     net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
                 network_gui.send(net_image_bytes, dataset.source_path)
                 if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
@@ -108,12 +143,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
+        # render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         if viewpoint_cam.alpha_mask is not None:
             alpha_mask = viewpoint_cam.alpha_mask.cuda()
             image *= alpha_mask
+
+
+        if viewpoint_cam != None and (last_save_name is None or viewpoint_cam.image_name == last_save_name):
+            image_cpu = image.detach().cpu().numpy()
+            image_cpu = np.clip(image_cpu, 0, 1)
+            image_uint8 = (image_cpu * 255).astype(np.uint8)
+            
+            image_uint8 = np.transpose(image_uint8, (1, 2, 0))
+            image_uint8 = cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(f"{last_save_name}.jpg", image_uint8)
+            last_save_name = viewpoint_cam.image_name
+            print(f"{last_save_name} Pose: {viewpoint_cam.R}, {viewpoint_cam.T}")
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
@@ -173,8 +221,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-            # Optimizer step
-            if iteration < opt.iterations:
+            if viewpoint_cam.uid in data_map["gs"] and iteration < 4000 and (iteration // 1000) % 2 == 0:
                 gaussians.exposure_optimizer.step()
                 gaussians.exposure_optimizer.zero_grad(set_to_none = True)
                 if use_sparse_adam:
@@ -184,10 +231,45 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 else:
                     gaussians.optimizer.step()
                     gaussians.optimizer.zero_grad(set_to_none = True)
+            
+            if viewpoint_cam.uid in data_map["pose"] and  iteration < 4000 and (iteration // 1000) % 2 == 0:
+                pose_optimizer.step()
+                viewpoint_cam.update_pose()
+                pose_optimizer.zero_grad(set_to_none = True)
+
+            if viewpoint_cam.uid in data_map["pose"] and  iteration < 4000  and (iteration // 1000) % 2 == 1:
+                gaussians.exposure_optimizer.step()
+                gaussians.exposure_optimizer.zero_grad(set_to_none = True)
+                if use_sparse_adam:
+                    visible = radii > 0
+                    gaussians.optimizer.step(visible, radii.shape[0])
+                    gaussians.optimizer.zero_grad(set_to_none = True)
+                else:
+                    gaussians.optimizer.step()
+                    gaussians.optimizer.zero_grad(set_to_none = True)
+            
+            if viewpoint_cam.uid in data_map["gs"] and  iteration < 4000  and (iteration // 1000) % 2 == 1:
+                pose_optimizer.step()
+                viewpoint_cam.update_pose()
+                pose_optimizer.zero_grad(set_to_none = True)
+
+            if iteration < opt.iterations and iteration > 4000:
+                gaussians.exposure_optimizer.step()
+                gaussians.exposure_optimizer.zero_grad(set_to_none = True)
+                if use_sparse_adam:
+                    visible = radii > 0
+                    gaussians.optimizer.step(visible, radii.shape[0])
+                    gaussians.optimizer.zero_grad(set_to_none = True)
+                else:
+                    gaussians.optimizer.step()
+                    gaussians.optimizer.zero_grad(set_to_none = True)
+ 
 
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+    camera_to_colmap(scene.model_path, scene.getTrainCameras())
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
