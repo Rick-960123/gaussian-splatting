@@ -151,17 +151,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             alpha_mask = viewpoint_cam.alpha_mask.cuda()
             image *= alpha_mask
 
-
-        if viewpoint_cam != None and (last_save_name is None or viewpoint_cam.image_name == last_save_name):
-            image_cpu = image.detach().cpu().numpy()
-            image_cpu = np.clip(image_cpu, 0, 1)
-            image_uint8 = (image_cpu * 255).astype(np.uint8)
+        # if viewpoint_cam != None and (last_save_name is None or viewpoint_cam.image_name == last_save_name):
+        #     image_cpu = image.detach().cpu().numpy()
+        #     image_cpu = np.clip(image_cpu, 0, 1)
+        #     image_uint8 = (image_cpu * 255).astype(np.uint8)
             
-            image_uint8 = np.transpose(image_uint8, (1, 2, 0))
-            image_uint8 = cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(f"{last_save_name}.jpg", image_uint8)
-            last_save_name = viewpoint_cam.image_name
-            print(f"{last_save_name} Pose: {viewpoint_cam.R}, {viewpoint_cam.T}")
+        #     image_uint8 = np.transpose(image_uint8, (1, 2, 0))
+        #     image_uint8 = cv2.cvtColor(image_uint8, cv2.COLOR_RGB2BGR)
+        #     last_save_name = viewpoint_cam.image_name
+        #     cv2.imwrite(f"{last_save_name}", image_uint8)
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
